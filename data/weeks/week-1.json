@@ -1,0 +1,288 @@
+{
+  "week": 1,
+  "title": "第 1 周：类与对象基础",
+  "goal": "从 struct 过渡到 class：用封装和访问控制保护数据，写出构造、析构、const 成员函数、static 成员都正确的类，并能解释编译器在每个环节替你生成了什么。",
+  "days": [
+    {
+      "id": "w1d1",
+      "weekday": "周一",
+      "title": "class 与封装：把数据关进盒子里",
+      "minutes": 90,
+      "kind": "learn",
+      "learn": [
+        "class 与 struct 的唯一语言级差别是默认访问级别：struct 成员默认 public，class 默认 private，所以「用 class 表达有不变量的抽象、用 struct 表达纯数据聚合」是社区惯例而非语法要求。",
+        "封装的价值是让不变量有唯一守门人：把数据成员设为 private 后，所有修改都必须经过成员函数，你才有机会在函数里做校验并决定错误的处理方式。",
+        "成员函数定义在类内部时默认是 inline 的候选，长函数应改到类外定义（用 ClassName:: 限定），头文件里只留声明，这样修改实现不会让所有包含者重编译。",
+        "命名惯例：数据成员加尾下划线（balance_）或 m_ 前缀，用来一眼区分「成员」与「参数/局部变量」，避免 this-> 满天飞。"
+      ],
+      "reading": "《C++ Primer（第 5 版）》第 7 章 7.1 定义抽象数据类型（7.1.1~7.1.4）；cppreference: class",
+      "practice": [
+        "写一个 BankAccount 类：数据成员 owner_ / balance_ 全 private，提供 deposit(double)、withdraw(double)、balance() const 三个成员函数，withdraw 金额超过余额时返回 false 且余额不变。",
+        "故意写一段 account.balance_ = -100; 让编译器报错，把报错信息抄下来，理解「访问控制是编译期检查」。"
+      ],
+      "exercises": [
+        {
+          "id": "w1d1e1",
+          "title": "封装一个 Student 类",
+          "prompt": "实现 Student 类，数据成员 name_（std::string）、score_（int）必须为 private。提供：setName(const std::string&)、setScore(int)（分数超出 0~100 时忽略本次设置并返回 false）、name() const、score() const。在 main 中创建一个对象，依次设置合法与非法分数并打印结果。\n\n验证标准：非法分数不改变原值，且全部 setter 返回值被检查（不允许出现未使用的返回值警告）。",
+          "hint": "setter 用 if 提前 return false；getter 声明为 const 成员函数，这样 const Student& 也能调用。类外定义时写成 bool Student::setScore(int s) { ... }。",
+          "answer": "```cpp\n#include <iostream>\n#include <string>\n\nclass Student {\npublic:\n    bool setName(const std::string& n) {\n        if (n.empty()) return false;\n        name_ = n;\n        return true;\n    }\n    bool setScore(int s) {\n        if (s < 0 || s > 100) return false;\n        score_ = s;\n        return true;\n    }\n    const std::string& name() const { return name_; }\n    int score() const { return score_; }\n\nprivate:\n    std::string name_ = \"未命名\";\n    int score_ = 0;\n};\n\nint main() {\n    Student s;\n    std::cout << std::boolalpha;\n    std::cout << s.setName(\"林岚\") << ' ' << s.setScore(88) << '\\n';\n    std::cout << s.name() << ' ' << s.score() << '\\n';\n    std::cout << s.setScore(150) << ' ' << s.setScore(-5) << '\\n';\n    std::cout << s.score() << '\\n';   // 仍是 88\n}\n```\n关键点：数据私有 + 校验集中在 setter，不变量（0<=score<=100）只有一处维护；getter 用 const 且返回 const 引用，避免拷贝又禁止外部改内部状态。",
+          "difficulty": 1
+        },
+        {
+          "id": "w1d1e2",
+          "title": "用 Point 打破封装后再补回来",
+          "prompt": "第一步：定义 struct Point { double x, y; }; 和一个函数 double dist(const Point& a, const Point& b);，实测 dist 可以正常调用。\n第二步：把 Point 改成 class，x/y 移到 private，只暴露 x() const / y() const 与带参构造函数 Point(double, double)，此时 dist 必须改用 x()、y()。\n第三步：在 Point 里加一个不变量——构造函数把坐标四舍五入到 0.1——并说明为什么这个不变量在 struct 版本里无法保证。\n\n验证标准：两版程序输出相同的距离值；第三步能用一句话解释封装带来的能力。",
+          "hint": "距离公式用 std::sqrt 或 std::hypot（<cmath>）。第三步的关键是：struct 版本里任何人都能写 p.x = 3.14159;，构造函数管不住后面发生的修改。",
+          "answer": "```cpp\n#include <cmath>\n#include <iostream>\n\nclass Point {\npublic:\n    Point(double x, double y)\n        : x_(std::round(x * 10) / 10), y_(std::round(y * 10) / 10) {}\n    double x() const { return x_; }\n    double y() const { return y_; }\n\nprivate:\n    double x_, y_;\n};\n\ndouble dist(const Point& a, const Point& b) {\n    return std::hypot(a.x() - b.x(), a.y() - b.y());\n}\n\nint main() {\n    Point a(0.04, 3.06), b(4.0, 0.0);\n    std::cout.precision(3);\n    std::cout << a.x() << ' ' << a.y() << '\\n';\n    std::cout << dist(a, b) << '\\n';\n}\n```\n关键点：不变量要成立，必须同时满足「数据不可被外部直接改写」和「所有写入口都做同样处理」；只有把 x/y 变成 private 并强制走构造函数，四舍五入才不会被绕过。",
+          "difficulty": 2
+        }
+      ],
+      "checklist": [
+        "能说出 class 与 struct 的默认访问级别差异，并说明为什么数据成员应当私有",
+        "BankAccount 与 Student 两段代码都在本机编译运行通过",
+        "能用自己的话解释「封装是为了给不变量找唯一守门人」"
+      ]
+    },
+    {
+      "id": "w1d2",
+      "weekday": "周二",
+      "title": "构造函数与初始化列表",
+      "minutes": 90,
+      "kind": "learn",
+      "learn": [
+        "初始化列表是初始化，函数体赋值是赋值：对于 const 成员、引用成员、没有默认构造函数的类类型成员，只有初始化列表能工作，函数体赋值会直接编译失败。",
+        "成员初始化顺序只由声明顺序决定，与初始化列表的书写顺序无关，所以把列表写成与声明同序，否则 -Wreorder 警告背后往往是真实的依赖 bug。",
+        "委托构造（构造函数调用同类另一个构造函数）让「默认值」只写一处：Date() : Date(2000, 1, 1) {}，避免默认参数与校验逻辑重复。",
+        "explicit 修饰单参构造函数可以阻止 string 隐式转成你的类型；需要隐式转换时是设计选择而非疏忽，写出来才算明确。"
+      ],
+      "reading": "《C++ Primer（第 5 版）》第 7 章 7.1.4 构造函数、7.5 构造函数再探（7.5.1 构造函数初始值列表、7.5.2 委托构造函数、7.5.4 隐式的类类型转换）",
+      "practice": [
+        "实现 Date 类（year_/month_/day_），要求：三参构造校验月份 1~12、天数不超过当月上限；两参构造默认 day=1（用委托构造实现）；无参构造委托到 Date(2000,1,1)。",
+        "写一个 std::string& 引用成员与一个 const int 成员的类 ImmutableId，证明只能靠初始化列表初始化，并尝试改成函数体赋值，记录编译器报错。"
+      ],
+      "exercises": [
+        {
+          "id": "w1d2e1",
+          "title": "带校验的 Date 类",
+          "prompt": "实现 Date 类：\n- Date(int y, int m, int d)：校验 1<=m<=12、1<=d<=该月天数（闰年按 4 年一闰、百年不闰、四百年再闰处理），非法时抛出 std::invalid_argument（需要 #include <stdexcept>）。\n- Date(int y, int m) 委托到上一版，day 取 1。\n- Date() 委托到 Date(2000, 1, 1)。\n- std::string toString() const 返回 2024-02-29 形式（月日补零）。\n\n验证标准：main 中构造 2024-02-29 与 2023-02-29，后者的异常被 try/catch 捕获并打印错误信息。",
+          "hint": "先写一个静态辅助函数 static bool isLeap(int y) 和 static int daysInMonth(int y, int m)，把 2 月特判放在 daysInMonth 里，构造函数只负责调用与抛异常。toString 用 std::to_string 加除法和取余手工补零。",
+          "answer": "```cpp\n#include <iostream>\n#include <stdexcept>\n#include <string>\n\nclass Date {\npublic:\n    Date(int y, int m, int d) : y_(y), m_(m), d_(d) {\n        if (m_ < 1 || m_ > 12 || d_ < 1 || d_ > daysInMonth(y_, m_))\n            throw std::invalid_argument(\"非法日期\");\n    }\n    Date(int y, int m) : Date(y, m, 1) {}\n    Date() : Date(2000, 1, 1) {}\n\n    std::string toString() const {\n        auto pad = [](int v) {\n            return (v < 10 ? \"0\" : \"\") + std::to_string(v);\n        };\n        return std::to_string(y_) + \"-\" + pad(m_) + \"-\" + pad(d_);\n    }\n\nprivate:\n    static bool isLeap(int y) {\n        return (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;\n    }\n    static int daysInMonth(int y, int m) {\n        static const int base[12] = {31,28,31,30,31,30,31,31,30,31,30,31};\n        if (m == 2 && isLeap(y)) return 29;\n        return base[m - 1];\n    }\n\n    int y_, m_, d_;\n};\n\nint main() {\n    std::cout << Date().toString() << '\\n';\n    std::cout << Date(2024, 2).toString() << '\\n';\n    std::cout << Date(2024, 2, 29).toString() << '\\n';\n    try {\n        Date bad(2023, 2, 29);\n        std::cout << bad.toString() << '\\n';\n    } catch (const std::invalid_argument& e) {\n        std::cout << \"catched: \" << e.what() << '\\n';\n    }\n}\n```\n关键点：三个构造函数都通过委托收敛到唯一带校验的实现，校验逻辑只有一份；月天数用 static 数组 + 闰年函数，构造函数只做判定与抛异常两件事。",
+          "difficulty": 2
+        },
+        {
+          "id": "w1d2e2",
+          "title": "证明初始化列表不可替代",
+          "prompt": "定义 Config 类，含一个 const int version_ 和一个 std::string& name_（引用成员）。\n1) 用构造函数初始化列表正确初始化它们，并写 print() 打印两个值。\n2) 注释掉初始化列表，改成在函数体内 version_ = v; name_ = n;，把编译器报错原文贴在代码注释里。\n3) 用一段 2~3 行注释说明：为什么引用成员在函数体里「赋值」在语义上不成立。\n\n验证标准：第 1 步能编译运行；第 2 步确实无法编译，且你记录了报错。",
+          "hint": "引用必须在诞生时绑定到某个对象，构造函数的函数体执行时，成员就已经「诞生」过了——引用没有默认状态可言，所以只能靠初始化列表完成绑定。",
+          "answer": "```cpp\n#include <iostream>\n#include <string>\n\nclass Config {\npublic:\n    // 第 2 步的反例（无法编译）：\n    // Config(int v, std::string& n) {\n    //     version_ = v;   // error C2789: 必须是可修改的左值 / const 成员不能赋值\n    //     name_ = n;      // error C2530: 引用必须初始化，且此后不能再绑定\n    // }\n    Config(int v, std::string& n) : version_(v), name_(n) {}\n\n    void print() const {\n        std::cout << \"version=\" << version_ << \" name=\" << name_ << '\\n';\n    }\n\nprivate:\n    const int version_;\n    std::string& name_;\n};\n\nint main() {\n    std::string tag = \"prod\";\n    Config c(3, tag);\n    c.print();\n    tag = \"prod-2\";\n    c.print();   // 引用跟随原对象变化\n}\n```\n关键点：初始化列表在成员「出生」时执行，函数体赋值发生在之后；const 成员出生后不可改，引用成员出生后不可重新绑定，因此这两类成员的赋值语句在语义上就不成立。",
+          "difficulty": 3
+        }
+      ],
+      "checklist": [
+        "能说出哪三类成员必须用初始化列表",
+        "Date 的非法日期测试与闰年边界（2000 与 1900）都验证过",
+        "两道题都编译通过，且第 2 题保留了真实的编译错误信息"
+      ]
+    },
+    {
+      "id": "w1d3",
+      "weekday": "周三",
+      "title": "析构函数与 RAII 与作用域",
+      "minutes": 60,
+      "kind": "learn",
+      "learn": [
+        "析构函数在对象离开作用域、被 delete 或容器销毁元素时自动调用，它没有参数、不能重载，是「确定性清理」的入口，也是 C++ 与 GC 语言最大的体验差异。",
+        "RAII = 资源获取即初始化：把资源的生命周期绑定到对象生命周期上，构造函数拿资源、析构函数放资源，于是「忘记释放」在语法上不可能发生。",
+        "局部对象按构造的逆序析构，这个保证是后续理解栈展开（异常传播时逐层析构）的前提，本周先把顺序本身观察清楚。",
+        "析构函数里抛异常极其危险：如果此时栈正在因为另一个异常而展开，程序会直接 terminate，所以析构函数体内的清理动作原则上不应失败，或必须在内部吞掉异常。"
+      ],
+      "reading": "《C++ Primer（第 5 版）》第 7 章 7.1.5 拷贝、赋值和析构（析构部分）、第 12 章 12.1.1 动态内存与智能指针（RAII 思想）、13.1.3 析构函数做了什么；cppreference: destructor",
+      "practice": [
+        "实现 ScopedTimer 类：构造时记录起点，析构时把「代码块耗时」打印到 stderr，用它在 main 里测量一段循环的耗时。",
+        "在一个作用域里创建 3 个 Tracer 对象（构造/析构各打印名字），确认析构顺序与构造顺序相反；再在中间插入一个内层 {} 块，观察内层对象先析构。"
+      ],
+      "exercises": [
+        {
+          "id": "w1d3e1",
+          "title": "观察构造与析构的顺序",
+          "prompt": "实现 Tracer 类：构造时打印 [ctor] 名字，析构时打印 [dtor] 名字，支持拷贝（拷贝构造也打印 [copy]）。在 main 中：\na) 在内层作用域 { Tracer a(\"a\"), b(\"b\"); } 里创建两个对象；\nb) 把 Tracer 按值传给一个函数 void sink(Tracer t);；\nc) 用一个 Tracer 对象按值初始化另一个 Tracer。\n\n验证标准：输出中能数出每一份对象各自的构造/拷贝/析构配对，且能指出内层作用域的对象先于外层析构；把观察结论写成 3 行注释。",
+          "hint": "按值传参和按值返回都会触发拷贝构造，析构次数与「曾经存在的对象个数」相等。先预测输出再运行，预测错了就回去看是哪一步多拷了一次。",
+          "answer": "```cpp\n#include <iostream>\n#include <string>\n\nclass Tracer {\npublic:\n    explicit Tracer(std::string name) : name_(std::move(name)) {\n        std::cout << \"[ctor] \" << name_ << '\\n';\n    }\n    Tracer(const Tracer& other) : name_(other.name_) {\n        std::cout << \"[copy] \" << name_ << '\\n';\n    }\n    ~Tracer() { std::cout << \"[dtor] \" << name_ << '\\n'; }\n\nprivate:\n    std::string name_;\n};\n\nvoid sink(Tracer t) { std::cout << \"  in sink: \" << \"\\n\"; }\n\nint main() {\n    std::cout << \"-- a) 内层作用域 --\\n\";\n    {\n        Tracer a(\"a\"), b(\"b\");\n    }\n    std::cout << \"-- b) 按值传参 --\\n\";\n    Tracer c(\"c\");\n    sink(c);\n    std::cout << \"-- c) 按值初始化 --\\n\";\n    Tracer d = c;\n    std::cout << \"-- main 结束 --\\n\";\n}\n```\n关键点：析构次数恒等于构造+拷贝次数，编译器不会漏掉任何一次；同一作用域内按构造逆序析构，内层作用域整体先于外层析构，这就是异常栈展开能安全清理的机制基础。",
+          "difficulty": 1
+        },
+        {
+          "id": "w1d3e2",
+          "title": "用 RAII 管理一个整数缓冲区",
+          "prompt": "实现 IntBuffer 类：构造函数申请 n 个 int（用 new int[n]{}），析构函数 delete[]，提供 int& at(int i)（越界抛 std::out_of_range）、int size() const。\n要求：\n1) main 中创建 IntBuffer，写入 0..n-1 并打印总和。\n2) 在 at() 越界抛异常的情况下，让异常从作用域中传出并被 main 捕获，用打印验证缓冲区仍然被正常释放。\n3) 注释说明：若把 new/delete 换成裸指针而不写析构函数，第 2 步会发生什么。\n\n验证标准：程序正常退出（退出码 0），异常被捕获，且释放路径确实执行。",
+          "hint": "把「分配」放在初始化列表或构造函数首行，把「释放」只放在析构函数里；测试释放可以用一个静态计数器或析构时打印一行。异常传播时栈展开会自动调用析构函数，这正是 RAII 的价值。",
+          "answer": "```cpp\n#include <iostream>\n#include <stdexcept>\n\nclass IntBuffer {\npublic:\n    explicit IntBuffer(int n) : n_(n), data_(new int[n]{}) {\n        std::cout << \"alloc \" << n_ << '\\n';\n    }\n    ~IntBuffer() {\n        delete[] data_;\n        std::cout << \"free \" << n_ << '\\n';   // 释放路径可见\n    }\n    IntBuffer(const IntBuffer&) = delete;\n    IntBuffer& operator=(const IntBuffer&) = delete;\n\n    int& at(int i) {\n        if (i < 0 || i >= n_) throw std::out_of_range(\"index\");\n        return data_[i];\n    }\n    int size() const { return n_; }\n\nprivate:\n    int n_;\n    int* data_;\n};\n\nint main() {\n    try {\n        IntBuffer buf(5);\n        for (int i = 0; i < buf.size(); ++i) buf.at(i) = i;\n        int sum = 0;\n        for (int i = 0; i < buf.size(); ++i) sum += buf.at(i);\n        std::cout << \"sum=\" << sum << '\\n';\n        buf.at(7) = 1;            // 抛异常，buf 在栈展开中被析构\n    } catch (const std::out_of_range& e) {\n        std::cout << \"caught: \" << e.what() << '\\n';\n    }\n    std::cout << \"bye\\n\";\n}\n```\n关键点：异常从 buf 的作用域逃出时，编译器插入的栈展开代码会调用 buf 的析构函数，所以「抛异常 = 泄漏」只在手写裸指针时成立；删除拷贝操作避免两个对象持有同一块内存而双重释放。",
+          "difficulty": 2
+        }
+      ],
+      "checklist": [
+        "能默写出析构函数的签名并说明它在哪些时机被调用",
+        "Tracer 实验的预测与实际输出一致或能解释差异",
+        "IntBuffer 的异常路径确实打印出释放信息"
+      ]
+    },
+    {
+      "id": "w1d4",
+      "weekday": "周四",
+      "title": "this 指针、const 成员函数与链式调用",
+      "minutes": 90,
+      "kind": "learn",
+      "learn": [
+        "this 是指向「调用本函数的那个对象」的指针，在非静态成员函数中隐含存在；返回 *this 的引用即可实现链式调用，返回类型必须是引用，否则每次链式都拷贝一个新对象。",
+        "const 成员函数承诺不修改对象状态（this 视为 const 指针），它是重载决议的一部分，因此可以按对象是否 const 提供两个版本：非 const 版返回可变引用，const 版返回 const 引用。",
+        "const 对象只能调用 const 成员函数，所以给所有不修改状态的成员函数加 const 不是风格洁癖，而是让别人能把你的类型放进 const 引用参数、const 容器里的必要条件。",
+        "mutable 成员可以在 const 成员函数中修改，用于缓存、计数器、互斥量这类「不改变逻辑状态」的成员；除此之外在 const 函数里改成员都应视为设计问题。"
+      ],
+      "reading": "《C++ Primer（第 5 版）》第 7 章 7.1.2 定义改进的 Sales_data 类（this 与 const 成员函数）、7.3.1 返回 *this 的成员函数、7.1.3 定义类相关的非成员函数；cppreference: this, const member function",
+      "practice": [
+        "实现 StringBuilder 类（内部 std::string 缓冲区），提供 append(const std::string&)、appendLine(const std::string&)、clear()，全部返回 StringBuilder& 以支持链式调用。",
+        "给一个 IntArray 类的 operator[] 写 const 与非 const 两个重载版本，并在 main 中分别用 IntArray 与 const IntArray& 触发出不同版本（用打印区分）。"
+      ],
+      "exercises": [
+        {
+          "id": "w1d4e1",
+          "title": "链式 StringBuilder",
+          "prompt": "实现 StringBuilder 类，内部只用 std::string 存储。\n- append(const std::string&) 追加文本并返回 *this 的引用；\n- appendLine(const std::string&) 先追加文本再追加 '\\n'；\n- size() const 返回当前长度；\n- str() const 返回内容的 const 引用。\n在 main 中写一条连续链式调用（至少 4 个方法）产生 3 行文本并打印，同时打印最终长度。\n\n验证标准：链式调用返回的是同一对象（可用 &b.append(...) == &b 断言），且程序无内存错误。",
+          "hint": "每个方法末尾写 return *this;，函数返回类型写 StringBuilder&。如果要让链式能「延长临时对象」，可以再补一个右值引用重载，但本周只需引用版本。",
+          "answer": "```cpp\n#include <cassert>\n#include <iostream>\n#include <string>\n\nclass StringBuilder {\npublic:\n    StringBuilder& append(const std::string& s) {\n        buf_ += s;\n        return *this;\n    }\n    StringBuilder& appendLine(const std::string& s) {\n        buf_ += s;\n        buf_ += '\\n';\n        return *this;\n    }\n    StringBuilder& clear() {\n        buf_.clear();\n        return *this;\n    }\n    std::size_t size() const { return buf_.size(); }\n    const std::string& str() const { return buf_; }\n\nprivate:\n    std::string buf_;\n};\n\nint main() {\n    StringBuilder b;\n    &b.appendLine(\"第一行\");\n    assert(&b.append(\"x\") == &b);          // 返回的是自己\n    b.clear().appendLine(\"第一行\").appendLine(\"第二行\").append(\"第三行\");\n    std::cout << b.str() << \"len=\" << b.size() << '\\n';\n}\n```\n关键点：返回 *this 的引用而不是值，才能保证链上操作的始终是同一个对象（assert 就是在验证这一点）；size()/str() 加 const，使 const StringBuilder& 也能读取内容。",
+          "difficulty": 1
+        },
+        {
+          "id": "w1d4e2",
+          "title": "const 与非 const 的 operator[] 重载",
+          "prompt": "实现 IntArray 类（大小固定为构造传入的 n，内部用 std::vector<int>）：\n- int& operator[](std::size_t i)（非 const 版，允许 a[0] = 5）；\n- const int& operator[](std::size_t i) const（const 版）；\n- 两版都要在越界时抛出 std::out_of_range；\n- 打印 void print(const IntArray& a) 的实现，验证它只能走 const 版。\n\n在 main 中：用非 const 对象写入数据，用 const 引用读取数据，并让越界访问抛出异常被捕获。\n\n验证标准：两份代码区分明显（例如两版分别打印 \"non-const []\" 与 \"const []\"），且越界行为一致。",
+          "hint": "重载决议只看「this 的 const 属性」；可以把公共的边界检查抽成一个 private 的 void check(std::size_t) const 供两版复用，避免重复。",
+          "answer": "```cpp\n#include <iostream>\n#include <stdexcept>\n#include <vector>\n\nclass IntArray {\npublic:\n    explicit IntArray(std::size_t n) : data_(n, 0) {}\n\n    int& operator[](std::size_t i) {\n        check(i);\n        std::cout << \"non-const []\\n\";\n        return data_[i];\n    }\n    const int& operator[](std::size_t i) const {\n        check(i);\n        std::cout << \"const []\\n\";\n        return data_[i];\n    }\n    std::size_t size() const { return data_.size(); }\n\nprivate:\n    void check(std::size_t i) const {\n        if (i >= data_.size()) throw std::out_of_range(\"index\");\n    }\n    std::vector<int> data_;\n};\n\nvoid print(const IntArray& a) {\n    for (std::size_t i = 0; i < a.size(); ++i) std::cout << a[i] << ' ';\n    std::cout << '\\n';\n}\n\nint main() {\n    IntArray a(4);\n    a[0] = 10;\n    a[1] = 20;\n    a[2] = 30;\n    print(a);\n    try {\n        std::cout << a[9] << '\\n';\n    } catch (const std::out_of_range& e) {\n        std::cout << \"caught: \" << e.what() << '\\n';\n    }\n}\n```\n关键点：const 属性参与重载，print 的参数是 const IntArray&，因此必然调用 const 版；把边界检查收进 private const 函数，两个版本共用一份判定，行为不会漂移。",
+          "difficulty": 2
+        },
+        {
+          "id": "w1d4e3",
+          "title": "用 mutable 缓存统计结果",
+          "prompt": "实现 Stats 类，内部 std::vector<double> data_，提供：\n- add(double)（追加数据，并使缓存失效）；\n- double mean() const（返回平均值，空数据返回 0）；\n- std::size_t cacheHits() const 返回缓存命中次数。\n要求 mean() 是 const 成员函数，但内部用 mutable 成员缓存已计算的平均值与有效性标记；连续两次调用 mean() 时第二次必须命中缓存（cacheHits 增加）。\n\n验证标准：main 中 add 三个数后连续调用 mean() 两次，打印两个相同的结果和 cacheHits()==1；再 add 一个数后调用 mean()，缓存失效并重新计算。",
+          "hint": "缓存字段写成 mutable double cached_ = 0; mutable bool valid_ = false; mutable std::size_t hits_ = 0;。add 里把 valid_ 置 false，mean 里判断 valid_ 决定是否重算。",
+          "answer": "```cpp\n#include <iostream>\n#include <numeric>\n#include <vector>\n\nclass Stats {\npublic:\n    void add(double v) {\n        data_.push_back(v);\n        valid_ = false;              // 数据变了，缓存作废\n    }\n    double mean() const {\n        if (!valid_) {\n            cached_ = data_.empty()\n                          ? 0.0\n                          : std::accumulate(data_.begin(), data_.end(), 0.0) / data_.size();\n            valid_ = true;\n        } else {\n            ++hits_;\n        }\n        return cached_;\n    }\n    std::size_t cacheHits() const { return hits_; }\n\nprivate:\n    std::vector<double> data_;\n    mutable double cached_ = 0.0;    // 不改变逻辑状态，故可 mutable\n    mutable bool valid_ = false;\n    mutable std::size_t hits_ = 0;\n};\n\nint main() {\n    Stats s;\n    s.add(1.0);\n    s.add(2.0);\n    s.add(4.0);\n    std::cout << s.mean() << ' ' << s.mean() << ' ' << s.cacheHits() << '\\n';\n    s.add(5.0);\n    std::cout << s.mean() << ' ' << s.cacheHits() << '\\n';\n}\n```\n关键点：缓存对调用者不可见，属于「实现细节」而非对象状态，所以用 mutable 让它能在 const 函数里改动；任何写操作都必须把 valid_ 置 false，否则会返回过期结果。",
+          "difficulty": 3
+        }
+      ],
+      "checklist": [
+        "能解释为什么链式调用必须返回引用",
+        "IntArray 的 const 与非 const 重载都被实际调用过",
+        "mutable 的适用场景能举出至少两个例子（缓存、计数器/互斥量）"
+      ]
+    },
+    {
+      "id": "w1d5",
+      "weekday": "周五",
+      "title": "static 成员与友元入门",
+      "minutes": 90,
+      "kind": "learn",
+      "learn": [
+        "static 数据成员属于类而不属于对象，所有对象共享一份，必须在类外定义一次（C++17 起可用 inline static 在类内直接定义并初始化），类内写 static int count_; 只是声明。",
+        "static 成员函数没有 this，因此不能访问非静态成员，却可以在没有对象的情况下调用（Counter::total()），常用来做工厂函数、工具函数和访问共享状态。",
+        "友元（friend）是「单向打破封装」的授权：友元函数或友元类可以访问 private 成员，但它不是成员函数、不继承、不传递，滥用会让封装形同虚设。",
+        "友元的经典用途是让非成员运算符（尤其是 operator<<）看到私有数据；能用公有成员函数实现时优先用公有接口，只有在无法避免时才开友元。"
+      ],
+      "reading": "《C++ Primer（第 5 版）》第 7 章 7.6 类的静态成员、7.2.1 友元（friend 声明）、7.3.4 友元再探（非成员运算符与友元）",
+      "practice": [
+        "给 Counter 类加 static int created_;，在构造函数里 ++created_、析构函数里 --created_，实现 static int alive() 返回当前存活对象数，用作用域块验证计数上下浮动。",
+        "写一个 Money 类（long cents_ 私有），用 friend std::ostream& operator<<(std::ostream&, const Money&) 打印 12.34 形式，并在 main 中 cout << m << '\\n';。"
+      ],
+      "exercises": [
+        {
+          "id": "w1d5e1",
+          "title": "Counter 与存活对象计数",
+          "prompt": "实现 Counter 类：\n- 每个对象有一个 id_（由 static int nextId_ 递增分配）；\n- 用 static 统计当前存活对象数 alive；\n- 提供工厂 static Counter make();\n- 提供 int id() const 与 static int aliveCount()。\n在 main 中：创建 3 个对象，打印 id 与 aliveCount；在作用域内创建一个对象，退出作用域后再打印 aliveCount，确认减 1。\n\n注意：为了让计数正确，需要正确处理拷贝（拷贝也是新对象）。\n\n验证标准：aliveCount 的数值与作用域内实际存活的对象数一致，退出作用域后归零（如果那时已无对象）。",
+          "hint": "nextId_ 和 alive_ 用 inline static 在类内定义（C++17），省去类外定义。拷贝构造时要 ++alive_ 并分配新 id，否则计数的语义会混乱。",
+          "answer": "```cpp\n#include <iostream>\n\nclass Counter {\npublic:\n    Counter() : id_(++nextId_) { ++alive_; }\n    Counter(const Counter&) : id_(++nextId_) { ++alive_; }\n    ~Counter() { --alive_; }\n\n    int id() const { return id_; }\n    static int aliveCount() { return alive_; }\n    static Counter make() { return Counter{}; }\n\nprivate:\n    int id_;\n    inline static int nextId_ = 0;\n    inline static int alive_ = 0;\n};\n\nint main() {\n    std::cout << \"start alive=\" << Counter::aliveCount() << '\\n';\n    Counter a, b, c;\n    std::cout << a.id() << ' ' << b.id() << ' ' << c.id() << '\\n';\n    std::cout << \"main alive=\" << Counter::aliveCount() << '\\n';\n    {\n        Counter d = Counter::make();\n        Counter e = d;                       // 拷贝 = 新对象\n        std::cout << \"inner alive=\" << Counter::aliveCount() << '\\n';\n    }\n    std::cout << \"after scope alive=\" << Counter::aliveCount() << '\\n';\n}\n```\n关键点：static 成员被所有对象共享，因此构造/析构里的增减就等价于「当前存活数量」；拷贝构造也必须计数，否则深层返回、按值传参都会让计数失真。",
+          "difficulty": 2
+        },
+        {
+          "id": "w1d5e2",
+          "title": "用友元实现 operator<<",
+          "prompt": "实现 Money 类（内部 long cents_，private），支持：\n- Money(long yuan, long fen) 与 explicit Money(long cents)；\n- Money operator+(const Money&) const；\n- friend std::ostream& operator<<(std::ostream& os, const Money& m) 输出形如 12.05 的字符串（分永远两位，负数正确显示为 -0.05）；\n- friend std::istream& operator>>(std::istream& is, Money& m) 读入两个整数（元、分）。\n在 main 中输入两次 Money 并打印它们的和。\n\n验证标准：12 元 5 分打印为 12.05；输入 1 5 与 2 95 时和打印为 4.00。",
+          "hint": "输出时先算绝对值，用整数除法和取余得到元、分，分不足两位补 0；符号单独处理。注意 operator+ 是成员函数，返回新对象（值语义）。",
+          "answer": "```cpp\n#include <cstdlib>\n#include <iostream>\n#include <iomanip>\n\nclass Money {\npublic:\n    Money(long yuan, long fen) : cents_(yuan * 100 + (yuan < 0 ? -fen : fen)) {}\n    explicit Money(long cents) : cents_(cents) {}\n\n    Money operator+(const Money& other) const {\n        return Money(cents_ + other.cents_);\n    }\n\n    friend std::ostream& operator<<(std::ostream& os, const Money& m);\n    friend std::istream& operator>>(std::istream& is, Money& m);\n\nprivate:\n    long cents_;\n};\n\nstd::ostream& operator<<(std::ostream& os, const Money& m) {\n    long v = m.cents_;\n    const char* sign = v < 0 ? \"-\" : \"\";\n    if (v < 0) v = -v;\n    os << sign << v / 100 << '.' << std::setw(2) << std::setfill('0') << v % 100;\n    return os;\n}\n\nstd::istream& operator>>(std::istream& is, Money& m) {\n    long y = 0, f = 0;\n    is >> y >> f;\n    m.cents_ = y * 100 + (y < 0 ? -f : f);\n    return is;\n}\n\nint main() {\n    Money a(12, 5), b(1, 5);\n    std::cout << a << \" + \" << b << \" = \" << (a + b) << '\\n';\n    Money x(0), y(0);\n    if (std::cin >> x >> y) std::cout << (x + y) << '\\n';\n}\n```\n关键点：operator<< 必须是非成员函数（左操作数是 ostream），所以要用 friend 才能读 private 的 cents_；输出用 std::setw/std::setfill 保证分始终两位，符号单独处理避免 -0.5 之类格式错误。",
+          "difficulty": 3
+        }
+      ],
+      "checklist": [
+        "能说出 static 数据成员为什么必须在类外定义（或 C++17 用 inline static）",
+        "Counter 的存活计数在作用域进出前后数值正确",
+        "能解释友元函数的三个「不是」：不是成员、不被继承、不具有传递性"
+      ]
+    },
+    {
+      "id": "w1d6",
+      "weekday": "周六",
+      "title": "项目日：BankAccount 完整类设计",
+      "minutes": 120,
+      "kind": "project",
+      "learn": [
+        "把本周的封装、构造、析构、const、static 串起来：一个「能用」的类，其价值在于任何时刻对象都满足不变量，且所有操作都有明确失败方式。",
+        "交易记录用 std::vector<Transaction> 保存，Transaction 作为嵌套的 public struct 只承载数据；这体现「class 管行为、struct 管数据」的分工。",
+        "错误处理在本周统一用「返回值 + 校验」，等到第 4 周再系统性换成异常，届时你才能对比两种风格的取舍。"
+      ],
+      "reading": "《C++ Primer（第 5 版）》第 7 章全章回顾（7.1~7.6），重点 7.1.4 与 7.6",
+      "practice": [
+        "实现 BankAccount：private 的 owner_、balance_(long，单位分)、std::vector<Transaction> history_；提供 deposit(long)、withdraw(long)（余额不足返回 false）、balance() const、const std::vector<Transaction>& history() const、static int accountCount()。",
+        "给所有只读成员函数补 const，把整个类的对象用 const BankAccount& 传进一个打印函数，确认装不上就说明 const 正确性还没做完。"
+      ],
+      "exercises": [
+        {
+          "id": "w1d6e1",
+          "title": "BankAccount 完整实现",
+          "prompt": "实现 BankAccount 类，满足：\n1) 构造：BankAccount(std::string owner, long initialCents)，初始金额为负时抛 std::invalid_argument；\n2) deposit(long cents)：cents<=0 返回 false，否则余额增加并追加一条 Transaction{type=Deposit, amount}；\n3) withdraw(long cents)：cents<=0 或超过余额返回 false，否则余额减少并追加 Transaction{type=Withdraw, amount}；\n4) balance() const、owner() const、history() const 返回 const 引用；\n5) static int accountCount() 统计存活账户数；\n6) 一个非成员函数 void printAccount(const BankAccount&) 打印户主、余额（元，两位小数）与全部交易记录。\n\n验收标准：main 里依次做「存 10000 分 → 取 3000 分 → 试图取 999999 分（失败）→ 非法初始金额（抛异常被捕获）」，输出的最终余额为 70.00，交易记录恰好 2 条，且全程 printAccount 只接收 const 引用。",
+          "hint": "嵌套 struct Transaction { enum class Type { Deposit, Withdraw }; Type type; long cents; }; 放在 public 区域。printAccount 通过 history() 的 const 引用遍历，用 setw/setfill 格式化金额。accountCount 用 inline static int count_ = 0; 在构造/析构（含拷贝构造）中维护。",
+          "answer": "```cpp\n#include <iomanip>\n#include <iostream>\n#include <stdexcept>\n#include <string>\n#include <vector>\n\nclass BankAccount {\npublic:\n    struct Transaction {\n        enum class Type { Deposit, Withdraw };\n        Type type;\n        long cents;\n    };\n\n    BankAccount(std::string owner, long initialCents) : owner_(std::move(owner)) {\n        if (initialCents < 0) throw std::invalid_argument(\"初始金额不能为负\");\n        balance_ = initialCents;\n        ++count_;\n    }\n    BankAccount(const BankAccount& other)\n        : owner_(other.owner_), balance_(other.balance_), history_(other.history_) {\n        ++count_;\n    }\n    ~BankAccount() { --count_; }\n\n    bool deposit(long cents) {\n        if (cents <= 0) return false;\n        balance_ += cents;\n        history_.push_back({Transaction::Type::Deposit, cents});\n        return true;\n    }\n    bool withdraw(long cents) {\n        if (cents <= 0 || cents > balance_) return false;\n        balance_ -= cents;\n        history_.push_back({Transaction::Type::Withdraw, cents});\n        return true;\n    }\n\n    long balance() const { return balance_; }\n    const std::string& owner() const { return owner_; }\n    const std::vector<Transaction>& history() const { return history_; }\n    static int accountCount() { return count_; }\n\nprivate:\n    std::string owner_;\n    long balance_ = 0;\n    std::vector<Transaction> history_;\n    inline static int count_ = 0;\n};\n\nstatic void printMoney(std::ostream& os, long cents) {\n    const char* sign = cents < 0 ? \"-\" : \"\";\n    if (cents < 0) cents = -cents;\n    os << sign << cents / 100 << '.' << std::setw(2) << std::setfill('0') << cents % 100;\n}\n\nvoid printAccount(const BankAccount& acc) {\n    std::cout << \"户主: \" << acc.owner() << \"  余额: \";\n    printMoney(std::cout, acc.balance());\n    std::cout << \"\\n交易 \" << acc.history().size() << \" 条:\\n\";\n    for (const auto& t : acc.history()) {\n        std::cout << \"  \" << (t.type == BankAccount::Transaction::Type::Deposit ? \"存入 \" : \"取出 \");\n        printMoney(std::cout, t.cents);\n        std::cout << '\\n';\n    }\n}\n\nint main() {\n    try {\n        BankAccount acc(\"林岚\", 10000);\n        acc.deposit(10000);                       // +10000\n        acc.deposit(0);                           // 失败\n        acc.withdraw(3000);                       // 先取 3000\n        std::cout << std::boolalpha;\n        std::cout << \"取 999999: \" << acc.withdraw(999999) << '\\n';\n        printAccount(acc);\n        std::cout << \"账户数: \" << BankAccount::accountCount() << '\\n';\n        BankAccount bad(\"张三\", -1);              // 抛异常\n    } catch (const std::invalid_argument& e) {\n        std::cout << \"catch: \" << e.what() << '\\n';\n    }\n}\n```\n关键点：把余额单位统一成分（long）避免浮点误差；所有写入口先校验再修改，保证「余额 >= 0」这一不变量；printAccount 只接受 const 引用，反向验证了只读接口的 const 正确性。",
+          "difficulty": 3
+        },
+        {
+          "id": "w1d6e2",
+          "title": "给 BankAccount 加转账与对账",
+          "prompt": "在上一题的基础上扩展（可以独立文件）：\n1) 增加成员函数 bool transferTo(BankAccount& other, long cents)：参数非法或余额不足返回 false，成功则本账户记录 Withdraw、对方记录 Deposit；\n2) 增加 long sumOfHistory() const：把 history_ 中所有交易按「存入为正、取出为负」求代数和，用于对账；\n3) 在 main 中验证：两个账户初始各 100.00 与 0.00，A 转给 B 50.00 后，两边 sumOfHistory 都等于各自当前余额。\n\n验收标准：转账失败时两个账户的余额和交易条数都不变（强一致：要么都成功，要么都不做）。",
+          "hint": "把校验全部放在修改之前：先判断 cents>0、this != &other、cents <= balance_，三者都通过再改两个账户。先把失败路径测试写出来，再写成功路径。",
+          "answer": "```cpp\n#include <iomanip>\n#include <iostream>\n#include <stdexcept>\n#include <string>\n#include <vector>\n\nclass BankAccount {\npublic:\n    struct Transaction {\n        enum class Type { Deposit, Withdraw };\n        Type type;\n        long cents;\n    };\n\n    BankAccount(std::string owner, long initialCents) : owner_(std::move(owner)), balance_(initialCents) {\n        if (initialCents < 0) throw std::invalid_argument(\"初始金额不能为负\");\n    }\n\n    bool deposit(long cents) {\n        if (cents <= 0) return false;\n        balance_ += cents;\n        history_.push_back({Transaction::Type::Deposit, cents});\n        return true;\n    }\n    bool withdraw(long cents) {\n        if (cents <= 0 || cents > balance_) return false;\n        balance_ -= cents;\n        history_.push_back({Transaction::Type::Withdraw, cents});\n        return true;\n    }\n    bool transferTo(BankAccount& other, long cents) {\n        if (cents <= 0 || this == &other || cents > balance_) return false;\n        withdraw(cents);\n        other.deposit(cents);\n        return true;\n    }\n\n    long balance() const { return balance_; }\n    long sumOfHistory() const {\n        long sum = 0;\n        for (const auto& t : history_) {\n            sum += (t.type == Transaction::Type::Deposit ? t.cents : -t.cents);\n        }\n        return sum;\n    }\n\nprivate:\n    std::string owner_;\n    long balance_;\n    std::vector<Transaction> history_;\n};\n\nstatic void show(const char* tag, const BankAccount& a) {\n    std::cout << tag << \" balance=\" << a.balance() / 100.0\n              << \" reconciled=\" << (a.sumOfHistory() == a.balance() ? \"yes\" : \"no\")\n              << '\\n';\n}\n\nint main() {\n    BankAccount a(\"A\", 10000), b(\"B\", 0);\n    std::cout << std::boolalpha;\n    std::cout << \"transfer ok: \" << a.transferTo(b, 5000) << '\\n';\n    std::cout << \"transfer too big: \" << a.transferTo(b, 999999) << '\\n';\n    std::cout << \"transfer to self: \" << a.transferTo(a, 100) << '\\n';\n    show(\"A\", a);\n    show(\"B\", b);\n}\n```\n关键点：transferTo 把所有失败条件在修改之前一次性判完，失败即返回、不产生任何副作用，这是「强一致」的最小实现方式；把资金单位继续统一为分，使对账等式 sumOfHistory() == balance() 可以精确比较。",
+          "difficulty": 3
+        }
+      ],
+      "checklist": [
+        "BankAccount 的非法参数、余额不足、转账自环三条失败路径都测过",
+        "所有只读成员函数都是 const，且 printAccount 只用 const 引用就能工作",
+        "能完整写出本周用过的 6 个概念（封装/构造/初始化列表/析构/const/static）各自解决了什么问题"
+      ]
+    },
+    {
+      "id": "w1d7",
+      "weekday": "周日",
+      "title": "休息与回顾",
+      "minutes": 30,
+      "kind": "rest",
+      "learn": [
+        "回看本周笔记，把「初始化列表 vs 函数体赋值」「const 成员函数是重载的一部分」两条用自己的话重写一遍。"
+      ],
+      "reading": "《C++ Primer（第 5 版）》第 7 章小结",
+      "practice": [
+        "可选任务：把上周写的任意一个 struct（如 Point 或学生成绩结构体）改造成封装类，加上构造函数校验与 const 只读接口。"
+      ],
+      "exercises": [
+        {
+          "id": "w1d7e1",
+          "title": "轻量自测：五个判断题",
+          "prompt": "不看笔记回答，然后翻回本周内容核对：\n1) class 里没有写访问说明符的成员默认是什么访问级别？\n2) 成员初始化顺序由什么决定？\n3) const 成员函数里能不能修改 mutable 成员？\n4) static 数据成员属于对象还是类？C++17 起可以在类内定义吗？\n5) 返回 *this 时返回类型写成值类型会有什么后果？",
+          "hint": "先全部写下答案再看书，把答错的条目单独记一行，下周开工前再扫一遍。",
+          "answer": "```cpp\n// 参考答案（可直接编译验证第 3、5 条）：\n#include <iostream>\n\nclass Demo {\npublic:\n    Demo& bump() { ++value_; return *this; }        // 返回引用：链式作用于同一对象\n    Demo bumpCopy() const { Demo d(*this); ++d.value_; return d; }  // 返回值：副本被修改\n    void touch() const { ++calls_; }                 // mutable 允许在 const 函数中改\n    int value() const { return value_; }\n    int calls() const { return calls_; }\n\nprivate:\n    int value_ = 0;\n    mutable int calls_ = 0;\n};\n\nint main() {\n    Demo d;\n    d.touch();\n    std::cout << \"calls=\" << d.calls() << '\\n';\n    d.bump().bump().bump();\n    std::cout << \"chained value=\" << d.value() << '\\n';   // 3\n    d.bumpCopy();\n    std::cout << \"after copy-modify value=\" << d.value() << '\\n';  // 仍是 3\n}\n```\n答案：1) private；2) 成员的声明顺序，与初始化列表书写顺序无关；3) 可以，mutable 正是为此存在；4) 属于类，所有对象共享一份，C++17 起可用 inline static 在类内定义并初始化；5) 每次链式调用都在修改一个临时副本，原对象不变（上面的 bumpCopy 演示了这一点）。",
+          "difficulty": 1
+        }
+      ],
+      "checklist": [
+        "五个判断题已作答并与笔记核对",
+        "错题记录已写下，知道自己下周要留意什么"
+      ]
+    }
+  ]
+}
