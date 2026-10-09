@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Study Planner",
+    "description": "Shows a study plan, daily exercises and check-in progress as a view tab in the conversation shell. Plans are generated in chat; check-ins are stored locally."
+  }
+}
