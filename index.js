@@ -20,8 +20,10 @@ const ROUTE_PREFIX = '/dsh-study-planner'
 const API_PATH = `${ROUTE_PREFIX}/api`
 const PLAN_ID_RE = /^[A-Za-z0-9._-]{1,64}$/
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url))
-const BUNDLED_PLAN = path.join(MODULE_DIR, 'data', 'plan-cpp-8week.json')
-const DEFAULT_PLAN_ID = 'cpp-8week'
+// 可选种子：data/seed/*.json 会在数据目录还没有任何计划时被复制进去。
+// 本模板仓库默认**不带**任何计划文件——第一份计划由对话里的 AI 按
+// docs/plan-format.md 生成；想随插件附带默认计划，就把 JSON 放进 data/seed/。
+const SEED_DIR = path.join(MODULE_DIR, 'data', 'seed')
 
 // --- 路径 --------------------------------------------------------------------
 
@@ -95,7 +97,8 @@ function planEntry(progress, planId) {
 
 // --- 计划目录 ----------------------------------------------------------------
 
-// 首次运行：数据目录不存在或没有计划时，装入内置默认计划。
+// 首次运行：准备数据目录；若配置了种子计划则种入，否则保持为空，
+// 由页面上的引导把第一份计划交给对话里的 AI 生成。
 function ensureStore() {
   const dir = plansDir()
   fs.mkdirSync(dir, { recursive: true })
@@ -107,13 +110,16 @@ function ensureStore() {
   }
   if (existing.length === 0) {
     try {
-      const bundled = readJson(BUNDLED_PLAN, null)
-      if (bundled && bundled.id) {
-        writeJsonAtomic(path.join(dir, `${bundled.id}.json`), bundled)
-        existing = [`${bundled.id}.json`]
+      const seeds = fs.readdirSync(SEED_DIR).filter((f) => f.toLowerCase().endsWith('.json'))
+      for (const file of seeds) {
+        const plan = readJson(path.join(SEED_DIR, file), null)
+        if (!plan || typeof plan !== 'object') continue
+        if (typeof plan.id !== 'string' || !PLAN_ID_RE.test(plan.id)) continue
+        writeJsonAtomic(path.join(dir, `${plan.id}.json`), plan)
+        existing.push(`${plan.id}.json`)
       }
     } catch {
-      // 内置计划缺失不影响插件工作：用户可以在对话里生成计划
+      // 没有 data/seed 目录是正常情况：第一份计划由对话生成
     }
   }
   const progress = readProgress()
