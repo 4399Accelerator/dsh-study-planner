@@ -5,6 +5,12 @@
 
 标签位置：会话顶部「对话 / 模拟器」这一排的右侧。
 
+```
+dsh plugin --profile <你的 profile> add github:4399Accelerator/dsh-study-planner
+```
+
+仓库地址：<https://github.com/4399Accelerator/dsh-study-planner>
+
 ---
 
 ## 特性
@@ -39,7 +45,21 @@
 dsh plugin --profile <你的 profile> add github:4399Accelerator/dsh-study-planner
 ```
 
-### 方式三：本地目录（开发用）
+### 方式三：压缩包（本机没有安装 git 时用这个）
+
+`github:` 形式的安装需要本机有 `git`。没有 git 的话，直接填 GitHub 的源码压缩包地址：
+
+```
+https://github.com/4399Accelerator/dsh-study-planner/archive/refs/heads/main.tar.gz
+```
+
+想锁定某个版本：
+
+```
+https://github.com/4399Accelerator/dsh-study-planner/archive/refs/tags/v1.0.0.tar.gz
+```
+
+### 方式四：本地目录（开发用）
 
 ```bash
 dsh plugin --profile <你的 profile> add <本仓库绝对路径>
