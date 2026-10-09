@@ -139,7 +139,7 @@ POST /dsh-study-planner/api     { "action": "...", ... }  ->  { "ok": true, "val
 | `data/weeks/week-*.json` | 上面那份计划的 8 个周次源文件，方便按周修改 |
 | `locale/zh.json`, `locale/en.json` | 插件管理页显示的标题与描述 |
 | `docs/plan-format.md` | 计划 JSON 格式规范（AI 写计划时读它） |
-| `docs/C++8周学习计划.md` | 由计划 JSON 生成的离线计划书（含全部题目与参考答案） |
+| `docs/cpp-8week-plan.zh.md` | 由计划 JSON 生成的离线计划书（含全部题目与参考答案） |
 
 浏览器半侧只依赖 DSH 平台提供的 `react`，不 import 任何 Harness 内部包；样式只用 `--dsw-alias-*` 主题变量，因此浅色 / 深色主题下都跟随宿主。
 
