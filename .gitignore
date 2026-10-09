@@ -1,0 +1,13 @@
+# 依赖与构建产物
+node_modules/
+pnpm-lock.yaml
+*.log
+
+# 编辑器与系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 插件运行时的本地数据（不在仓库里）
+progress.json
