@@ -1,0 +1,61 @@
+{
+  "name": "dsh-study-planner",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "DSH 学习计划与打卡进度插件：在会话视图里加一个「学习计划」标签，显示每日计划、课后题与打卡进度可视化；计划文件由对话里的 AI 生成，打卡记录由本插件维护。",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "study-plan",
+    "check-in",
+    "learning"
+  ],
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "icon.svg",
+    "locale",
+    "data",
+    "docs",
+    "README.md",
+    "LICENSE"
+  ],
+  "icon": "./icon.svg",
+  "meta": {
+    "title": "学习计划",
+    "description": "在会话视图里显示学习计划表、每日课后题与打卡进度，计划内容由对话生成。"
+  },
+  "author": "4399Accelerator",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/4399Accelerator/dsh-study-planner.git"
+  },
+  "homepage": "https://github.com/4399Accelerator/dsh-study-planner#readme",
+  "bugs": {
+    "url": "https://github.com/4399Accelerator/dsh-study-planner/issues"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    }
+  }
+}
