@@ -1,0 +1,280 @@
+{
+  "week": 2,
+  "title": "第 2 周：拷贝控制与运算符重载",
+  "goal": "掌握对象「怎么被复制、怎么被移动、怎么参与运算」：写出正确的三法则类，区分深浅拷贝，理解 std::move 偷资源的机制，并能让自定义类型像内置类型一样参与 + - == << += 与下标访问。",
+  "days": [
+    {
+      "id": "w2d1",
+      "weekday": "周一",
+      "title": "三法则：编译器替你生成了什么",
+      "minutes": 90,
+      "kind": "learn",
+      "learn": [
+        "三法则说的是：如果你需要自定义析构函数、拷贝构造函数、拷贝赋值运算符中的任意一个，那么这三个你几乎都需要——因为它们共同负责同一份资源，只写一个是典型的半成品。",
+        "编译器按需合成拷贝构造与拷贝赋值，合成版本对每个成员逐个执行拷贝（对指针成员就是复制地址，即浅拷贝），这正是「两个对象指向同一块内存」的根源。",
+        "= default 是显式要求编译器生成默认实现（比手写更不容易出错、也能保持 trivially copyable 的优化），= delete 则是彻底禁止该操作，例如禁止拷贝的文件句柄或单例。",
+        "只要类里有原始指针成员并自行管理其生命周期，拷贝操作就必须自己写；没有资源成员的类应当依赖默认版本，多写只会引入 bug。"
+      ],
+      "reading": "《C++ Primer（第 5 版）》第 13 章 13.1 拷贝、赋值与销毁（13.1.1 拷贝构造函数、13.1.2 拷贝赋值运算符、13.1.3 析构函数、13.1.4 三/五法则、13.1.5 使用 = default、13.1.6 阻止拷贝）；cppreference: rule of three",
+      "practice": [
+        "实现 TrackedResource 类：带 static 计数，成员是 std::vector<int>；分别用 = default 与 = delete 控制拷贝构造/拷贝赋值，在 main 中观察哪些语句能编译、哪些不能。",
+        "写一个只定义析构函数却使用默认拷贝的类（含指针成员），观察运行结果，把现象记录成 3 行注释。"
+      ],
+      "exercises": [
+        {
+          "id": "w2d1e1",
+          "title": "用 = default 与 = delete 控制拷贝",
+          "prompt": "实现两个类：\n1) Copyable：成员 std::vector<int> data_，拷贝构造与拷贝赋值都用 = default，提供 push(int)、size() const、sum() const。\n2) Unique：同上成员，但用 = delete 禁止拷贝构造与拷贝赋值，只允许移动（可以先用 = default 移动）。\n在 main 中：拷贝一个 Copyable 并修改副本，验证原对象不受影响；对 Unique 写一行 `Unique u2 = u1;` 但用注释标注它无法编译，并贴上报错关键词。\n\n验证标准：程序编译运行通过，Copyable 的两份数据相互独立（打印两个 sum），且注释中说明 = delete 触发的编译错误类型。",
+          "hint": "= default 写在声明位置（类内），= delete 同样写在类内声明处。vector 成员本身会做深拷贝，所以默认版本对 vector 是安全的——这也解释了为什么你不该手写。",
+          "answer": "```cpp\n#include <iostream>\n#include <vector>\n\nclass Copyable {\npublic:\n    Copyable() = default;\n    Copyable(const Copyable&) = default;\n    Copyable& operator=(const Copyable&) = default;\n\n    void push(int v) { data_.push_back(v); }\n    std::size_t size() const { return data_.size(); }\n    int sum() const {\n        int s = 0;\n        for (int v : data_) s += v;\n        return s;\n    }\n\nprivate:\n    std::vector<int> data_;\n};\n\nclass Unique {\npublic:\n    Unique() = default;\n    Unique(const Unique&) = delete;              // 禁止拷贝\n    Unique& operator=(const Unique&) = delete;   // 禁止拷贝赋值\n    Unique(Unique&&) = default;                  // 移动仍然可用\n    Unique& operator=(Unique&&) = default;\n\n    void push(int v) { data_.push_back(v); }\n    int sum() const {\n        int s = 0;\n        for (int v : data_) s += v;\n        return s;\n    }\n\nprivate:\n    std::vector<int> data_;\n};\n\nint main() {\n    Copyable c1;\n    c1.push(1);\n    c1.push(2);\n    Copyable c2 = c1;        // 默认拷贝构造：vector 各自一份\n    c2.push(100);\n    std::cout << \"c1 sum=\" << c1.sum() << \" size=\" << c1.size() << '\\n';\n    std::cout << \"c2 sum=\" << c2.sum() << \" size=\" << c2.size() << '\\n';\n\n    Unique u1;\n    u1.push(7);\n    Unique u2 = std::move(u1);   // 移动可以\n    // Unique u3 = u2;           // error C2280: 尝试引用已删除的函数\n    std::cout << \"u2 sum=\" << u2.sum() << '\\n';\n}\n```\n关键点：= default 让编译器生成逐成员版本，对 vector 这类自带深拷贝的成员成员完全正确；= delete 把「不该发生的操作」从运行期错误提升为编译期错误，比写注释文档可靠得多。",
+          "difficulty": 1
+        },
+        {
+          "id": "w2d1e2",
+          "title": "捕获浅拷贝的双重释放",
+          "prompt": "写一个「坏」的类 BadIntArray：成员 int* data_; 与 int n_; 构造函数 new int[n]{}，析构函数 delete[] data_;，**不写拷贝构造与拷贝赋值**（使用编译器合成版本）。\n1) 在 main 中写 `BadIntArray a(3); BadIntArray b = a;`，运行程序并记录结果（可能崩溃、可能打印后 heap corruption）。\n2) 再加一个按值传参的函数 void consume(BadIntArray x) 并调用它，观察崩溃是否更早出现。\n3) 用 3~5 行注释解释：哪两次 delete[] 作用在同一地址上，为什么会出现双重释放。\n\n验证标准：你能明确指出「合成拷贝构造只复制了 data_ 指针值」，并说明为何在 Debug/Release 下现象可能不同。",
+          "hint": "两个对象的 data_ 是同一个地址，析构时都会执行 delete[]，第二次就是未定义行为。想看清地址，可以在构造和析构里打印 data_ 的地址。",
+          "answer": "```cpp\n#include <iostream>\n\nclass BadIntArray {\npublic:\n    explicit BadIntArray(int n) : data_(new int[n]{}), n_(n) {\n        std::cout << \"ctor data=\" << static_cast<void*>(data_) << '\\n';\n    }\n    ~BadIntArray() {\n        std::cout << \"dtor data=\" << static_cast<void*>(data_) << '\\n';\n        delete[] data_;    // 第二次对同一地址执行就是双重释放\n    }\n    int& at(int i) { return data_[i]; }\n    int size() const { return n_; }\n\nprivate:\n    int* data_;\n    int n_;\n};\n\nvoid consume(BadIntArray x) { std::cout << \"  consume size=\" << x.size() << '\\n'; }\n\nint main() {\n    BadIntArray a(3);\n    a.at(0) = 42;\n    BadIntArray b = a;                 // 合成拷贝：两个对象共用 data_\n    std::cout << \"b[0]=\" << b.at(0) << '\\n';\n    consume(a);                        // 又复制一份，析构更早发生\n    std::cout << \"main 结束\\n\";\n}\n```\n关键点：合成拷贝构造对指针成员只复制地址，于是 a、b 以及形参 x 的 data_ 指向同一块堆内存，三次析构会执行三次 delete[]，第二次开始就是未定义行为（常见表现是 heap corruption 或 abort）。正确做法是写深拷贝（见 w2d2），而不是依赖默认实现。",
+          "difficulty": 2
+        }
+      ],
+      "checklist": [
+        "能说出编译器在什么条件下合成拷贝构造与拷贝赋值",
+        "能写出三法则的完整表述并解释它为什么成立",
+        "已亲眼观察到浅拷贝导致的析构异常（保留输出或注释记录）"
+      ]
+    },
+    {
+      "id": "w2d2",
+      "weekday": "周二",
+      "title": "深拷贝与拷贝赋值",
+      "minutes": 90,
+      "kind": "learn",
+      "learn": [
+        "深拷贝 = 为新对象重新申请一块同样大小的资源并复制内容，使两个对象的生命周期彻底解耦；判断标准是「销毁任意一个对象，另一个仍然可用」。",
+        "拷贝赋值比拷贝构造多两个坑：必须先释放自己原有的资源（否则泄漏），并且必须先判断自赋值 a = a（否则先删掉自己的资源再读它，直接拿到已释放内存）。",
+        "「先拷贝、再释放、后接管」（copy-and-swap）或先分配新内存再 delete 旧内存，是避免中途抛异常导致半成品状态的稳妥写法。",
+        "拷贝赋值的返回类型是 T& 并返回 *this，这样才能支持链式赋值 a = b = c，也与内置类型的语义一致。"
+      ],
+      "reading": "《C++ Primer（第 5 版）》第 13 章 13.1.2 拷贝赋值运算符、13.2 拷贝控制和资源管理（13.2.1 行为像值的类、13.2.2 定义行为像指针的类）",
+      "practice": [
+        "实现 IntArray 的完整三法则：拷贝构造做深拷贝、拷贝赋值做「判自赋值 + 释放旧资源 + 申请 + 复制」、析构 delete[]。",
+        "在拷贝赋值里临时注释掉自赋值判断，写一个 a = a; 的测试并观察现象，然后恢复判断。"
+      ],
+      "exercises": [
+        {
+          "id": "w2d2e1",
+          "title": "IntArray 的深拷贝三法则",
+          "prompt": "实现 IntArray：\n- explicit IntArray(int n, int init = 0)：申请 n 个 int 并初始化为 init；\n- 拷贝构造：深拷贝；\n- 拷贝赋值：处理自赋值并返回 IntArray&；\n- 析构：delete[]；\n- int& at(int i)、int size() const；\n- void fill(int v) 把所有元素设为 v。\n验收：\n```cpp\nIntArray a(4, 1);\nIntArray b = a;        // 深拷贝\nb.fill(9);\na.at(0) = 100;\nstd::cout << a.sum() << ' ' << b.sum() << '\\n';  // 104 36\nIntArray c(2, 5);\nc = c;                 // 自赋值：不得崩溃、数据不变\nc = a;                 // 重新赋值：先释放旧资源\nstd::cout << c.sum() << ' ' << a.sum() << '\\n';  // 104 104\n```\n（sum() 请自行实现）",
+          "hint": "拷贝赋值的安全顺序：先判断 this == &other，然后 new 一块新内存、把数据拷过去，最后 delete[] 旧指针并把成员指向新内存。这样即使中途抛异常，对象也还是完整的旧状态。",
+          "answer": "```cpp\n#include <algorithm>\n#include <iostream>\n\nclass IntArray {\npublic:\n    explicit IntArray(int n, int init = 0) : n_(n), data_(new int[n]) {\n        std::fill(data_, data_ + n_, init);\n    }\n    IntArray(const IntArray& other) : n_(other.n_), data_(new int[other.n_]) {\n        std::copy(other.data_, other.data_ + other.n_, data_);\n    }\n    IntArray& operator=(const IntArray& other) {\n        if (this == &other) return *this;              // 自赋值\n        int* fresh = new int[other.n_];                // 先申请、再拷贝\n        std::copy(other.data_, other.data_ + other.n_, fresh);\n        delete[] data_;                                // 后释放旧资源\n        data_ = fresh;\n        n_ = other.n_;\n        return *this;\n    }\n    ~IntArray() { delete[] data_; }\n\n    int& at(int i) { return data_[i]; }\n    const int& at(int i) const { return data_[i]; }\n    int size() const { return n_; }\n    void fill(int v) { std::fill(data_, data_ + n_, v); }\n    int sum() const {\n        int s = 0;\n        for (int i = 0; i < n_; ++i) s += data_[i];\n        return s;\n    }\n\nprivate:\n    int n_ = 0;\n    int* data_ = nullptr;\n};\n\nint main() {\n    IntArray a(4, 1);\n    IntArray b = a;\n    b.fill(9);\n    a.at(0) = 100;\n    std::cout << a.sum() << ' ' << b.sum() << '\\n';\n\n    IntArray c(2, 5);\n    c = c;\n    std::cout << \"self-assign ok: \" << c.sum() << '\\n';\n    c = a;\n    std::cout << c.sum() << ' ' << a.sum() << '\\n';\n}\n```\n关键点：拷贝赋值里「先 new 再 delete」保证任何时刻对象都持有一块有效内存；自赋值判断不可省，否则 delete[] 之后再去读 other.data_ 就是读已释放内存。at() 提供 const 与非 const 两个版本，让 const IntArray 也能只读访问。",
+          "difficulty": 2
+        },
+        {
+          "id": "w2d2e2",
+          "title": "用 copy-and-swap 实现强异常安全",
+          "prompt": "在上一题的 IntArray 基础上增加：\n1) void swap(IntArray& other) noexcept：交换 n_ 与 data_；\n2) 拷贝赋值改用 copy-and-swap 惯用法：先按值构造一个临时对象（借助已有的拷贝构造），再与 *this 交换；\n3) 一个 free 函数 void swap(IntArray& a, IntArray& b) noexcept 调用成员版本。\n验收：\n- c = a 之后数据正确，且自赋值 c = c 不崩溃；\n- 代码中 operator= 只有 3 行左右；\n- 注释说明：为什么这种写法自动获得「强异常安全保证」和「自赋值安全」。",
+          "hint": "写法是 IntArray& operator=(IntArray other) { swap(other); return *this; }——注意形参是按值传递（这就是「拷贝」步骤），函数返回时 other 析构，自动释放了本该释放的旧资源。",
+          "answer": "```cpp\n#include <algorithm>\n#include <iostream>\n#include <utility>\n\nclass IntArray {\npublic:\n    explicit IntArray(int n, int init = 0) : n_(n), data_(new int[n]) {\n        std::fill(data_, data_ + n_, init);\n    }\n    IntArray(const IntArray& other) : n_(other.n_), data_(new int[other.n_]) {\n        std::copy(other.data_, other.data_ + other.n_, data_);\n    }\n    IntArray& operator=(IntArray other) {   // 按值形参：拷贝在这里完成\n        swap(other);                         // 接管副本的资源\n        return *this;                        // other 析构，释放原有资源\n    }\n    ~IntArray() { delete[] data_; }\n\n    void swap(IntArray& other) noexcept {\n        std::swap(n_, other.n_);\n        std::swap(data_, other.data_);\n    }\n\n    int& at(int i) { return data_[i]; }\n    int size() const { return n_; }\n    void fill(int v) { std::fill(data_, data_ + n_, v); }\n    int sum() const {\n        int s = 0;\n        for (int i = 0; i < n_; ++i) s += data_[i];\n        return s;\n    }\n\nprivate:\n    int n_ = 0;\n    int* data_ = nullptr;\n};\n\nvoid swap(IntArray& a, IntArray& b) noexcept { a.swap(b); }\n\nint main() {\n    IntArray a(4, 1);\n    a.at(0) = 100;\n    IntArray c(2, 5);\n    c = c;                                  // 自赋值\n    std::cout << \"self: \" << c.sum() << '\\n';\n    c = a;                                  // 赋值\n    std::cout << c.sum() << ' ' << a.sum() << '\\n';\n    swap(c, a);\n    std::cout << c.sum() << ' ' << a.sum() << '\\n';\n}\n```\n关键点：所有可能抛异常的分配与拷贝都发生在形参副本上，*this 只在最后做 noexcept 的 swap，因此要么完全成功、要么原对象一点没变（强异常安全）；自赋值天然安全，因为交换自己等于没换，之后临时对象析构掉的正是旧资源。",
+          "difficulty": 3
+        }
+      ],
+      "checklist": [
+        "能说出拷贝赋值必须处理的三个额外问题：释放旧资源、自赋值、返回 *this",
+        "IntArray 的深拷贝测试通过（修改副本不影响原对象）",
+        "能自己讲清 copy-and-swap 为什么能提供强异常安全"
+      ]
+    },
+    {
+      "id": "w2d3",
+      "weekday": "周三",
+      "title": "运算符重载：+ == != 与 <<",
+      "minutes": 90,
+      "kind": "learn",
+      "learn": [
+        "运算符重载的本质是函数调用：a + b 就是 operator+(a, b)，编译器只负责把它翻译成一次调用，因此「哪些运算符能重载、参数个数、优先级」都受语言规则约束（不能发明新运算符，不能改变优先级）。",
+        "成员还是非成员由「左操作数是否必须是你自己的类型」决定：operator<< 的左操作数是 std::ostream，所以几乎总要写成非成员；而 operator+= 修改左操作数，写成成员更自然。",
+        "返回类型的语义比语法更重要：+ 返回新对象（值），+= 返回 T&（支持 a += b += c），== 返回 bool 且应尽可能用 const 成员或非成员，且不应修改操作数。",
+        "一个易踩的坑：重载 == 不会自动带来 !=（C++17 也不自动），需要成对提供；但可以基于 == 实现 !=，保证两者逻辑永不矛盾。"
+      ],
+      "reading": "《C++ Primer（第 5 版）》第 14 章 14.1 基本概念、14.2 输入和输出运算符、14.3 算术和关系运算符（14.3.1 相等运算符、14.3.2 关系运算符）、14.8.1 成员运算符、14.9 重载、类型转换与运算符；cppreference: operator overloading",
+      "practice": [
+        "实现 Rational 类（分子、分母，构造时约分并保证分母为正），重载 operator+、operator-、operator==、operator!=、operator<<、operator+=。",
+        "给 Point 类加 operator<< 与 operator==，并在一个 vector<Point> 上用 std::find 查找某个点，验证 == 被调用。"
+      ],
+      "exercises": [
+        {
+          "id": "w2d3e1",
+          "title": "Rational 分数类的算术与比较",
+          "prompt": "实现 Rational 类：数据成员 long num_、long den_（private）。\n- 构造函数 Rational(long n, long d = 1)：d 为 0 抛 std::invalid_argument；约分并保证 den_ > 0；\n- operator+、operator-（成员，返回新对象）；\n- operator+=（返回 Rational&）；\n- operator==、operator!=（返回 bool，不修改操作数）；\n- friend operator<< 输出最简形式，整数显示为 3 而不是 3/1。\n验收：\n```cpp\nRational a(1, 2), b(1, 3);\nstd::cout << a << \" + \" << b << \" = \" << (a + b) << '\\n';   // 1/2 + 1/3 = 5/6\nstd::cout << (a - b) << ' ' << (a == b) << ' ' << (a != b) << '\\n'; // 1/6 false true\nRational c(4, 2);\nstd::cout << c << '\\n';                                     // 2\n(a += b) += b;\nstd::cout << a << '\\n';                                     // 7/6\n```",
+          "hint": "用 std::gcd（<numeric>）约分。加法通分：num = a.num*b.den + b.num*a.den，den = a.den*b.den，构造时统一约分。operator!= 直接 return !(*this == other); 避免逻辑分叉。",
+          "answer": "```cpp\n#include <iostream>\n#include <numeric>\n#include <stdexcept>\n\nclass Rational {\npublic:\n    Rational(long n, long d = 1) : num_(n), den_(d) {\n        if (d == 0) throw std::invalid_argument(\"分母不能为 0\");\n        normalize();\n    }\n\n    Rational operator+(const Rational& o) const {\n        return Rational(num_ * o.den_ + o.num_ * den_, den_ * o.den_);\n    }\n    Rational operator-(const Rational& o) const {\n        return Rational(num_ * o.den_ - o.num_ * den_, den_ * o.den_);\n    }\n    Rational& operator+=(const Rational& o) {\n        *this = *this + o;\n        return *this;\n    }\n    bool operator==(const Rational& o) const {\n        return num_ == o.num_ && den_ == o.den_;   // 已约分，可直接比\n    }\n    bool operator!=(const Rational& o) const { return !(*this == o); }\n\n    friend std::ostream& operator<<(std::ostream& os, const Rational& r);\n\nprivate:\n    void normalize() {\n        if (den_ < 0) { den_ = -den_; num_ = -num_; }   // 负号放分子\n        long g = std::gcd(num_ < 0 ? -num_ : num_, den_);\n        if (g > 1) { num_ /= g; den_ /= g; }\n    }\n    long num_;\n    long den_;\n};\n\nstd::ostream& operator<<(std::ostream& os, const Rational& r) {\n    if (r.den_ == 1) return os << r.num_;\n    return os << r.num_ << '/' << r.den_;\n}\n\nint main() {\n    Rational a(1, 2), b(1, 3);\n    std::cout << a << \" + \" << b << \" = \" << (a + b) << '\\n';\n    std::cout << std::boolalpha;\n    std::cout << (a - b) << ' ' << (a == b) << ' ' << (a != b) << '\\n';\n    std::cout << Rational(4, 2) << '\\n';\n    (a += b) += b;\n    std::cout << a << '\\n';\n}\n```\n关键点：不变量的建立收在构造函数里（分母非零、约分、符号归位），于是 operator== 可以退化成成员逐一比较；operator+= 返回引用才能支持 (a += b) += b，而 operator+ 返回新值符合算术语义。",
+          "difficulty": 2
+        },
+        {
+          "id": "w2d3e2",
+          "title": "Point 的 == 与流输出，并用于 std::find",
+          "prompt": "实现 Point 类（double x, y 私有）：\n- Point(double x = 0, double y = 0)；\n- operator==（精确比较即可，不必做浮点误差容忍）与 operator!=；\n- friend operator<< 输出 (x, y) 形式，x/y 保留一位小数；\n在 main 中构造 std::vector<Point>（含 (0,0)、(1.5,-2.0)、(3,4)），用 std::find 查找 (3,4) 并打印是否找到及其下标；再查找 (9,9) 验证返回 end()。\n\n验证标准：输出明确区分「找到，下标=2」与「未找到」，并且编译时不需要为 Point 手写任何容器支持代码。",
+          "hint": "std::find 需要 operator==，它会按顺序调用每个元素与目标的比较。输出小数点位数用 os << std::fixed << std::setprecision(1)（注意 include <iomanip>），但这会改变流的持久状态，可以只在本函数内设置。",
+          "answer": "```cpp\n#include <algorithm>\n#include <iomanip>\n#include <iostream>\n#include <vector>\n\nclass Point {\npublic:\n    Point(double x = 0, double y = 0) : x_(x), y_(y) {}\n    double x() const { return x_; }\n    double y() const { return y_; }\n\n    bool operator==(const Point& o) const { return x_ == o.x_ && y_ == o.y_; }\n    bool operator!=(const Point& o) const { return !(*this == o); }\n\n    friend std::ostream& operator<<(std::ostream& os, const Point& p) {\n        os << '(' << p.x_ << \", \" << p.y_ << ')';\n        return os;\n    }\n\nprivate:\n    double x_, y_;\n};\n\nint main() {\n    std::vector<Point> pts = {Point(0, 0), Point(1.5, -2.0), Point(3, 4)};\n\n    auto report = [&](const Point& target) {\n        auto it = std::find(pts.begin(), pts.end(), target);\n        if (it == pts.end()) {\n            std::cout << \"未找到 \" << target << '\\n';\n        } else {\n            std::cout << \"找到 \" << *it << \" 下标=\" << (it - pts.begin()) << '\\n';\n        }\n    };\n\n    report(Point(3, 4));\n    report(Point(9, 9));\n}\n```\n关键点：算法只依赖语义契约——std::find 需要「能用 == 比较」，你的 Point 一旦提供了正确的 ==，就能直接放进标准算法而无需修改算法代码；operator<< 写成非成员友元是因为左操作数是 ostream。",
+          "difficulty": 2
+        }
+      ],
+      "checklist": [
+        "能解释为什么 operator<< 通常写成非成员函数",
+        "能说出 operator+ 与 operator+= 返回类型不同的原因",
+        "Rational 的约分、负数、整数显示三种情况都测过"
+      ]
+    },
+    {
+      "id": "w2d4",
+      "weekday": "周四",
+      "title": "下标运算符与其他常用重载",
+      "minutes": 60,
+      "kind": "learn",
+      "learn": [
+        "operator[] 只能写成成员函数，并且应当成对提供 const 与非 const 两版：非 const 版返回 T& 允许写入，const 版返回 const T& 保证 const 对象不被改写。",
+        "下标语义由你的容器决定但要与用户预期一致：标准容器中 operator[] 不做边界检查（越界是未定义行为），而 at() 做检查并抛异常；自定义容器建议同时提供两者。",
+        "一元与二元、前缀与后缀自增都要区分：后缀版本多一个 int 哑参数，且应返回旧值（值语义），前缀版本返回引用；这是少数「必须照抄签名」的地方。",
+        "别滥用运算符重载：当语义不直观时（比如 operator+ 表示「合并两个数据库连接」）应改用普通具名函数，重载的目标是让代码更像内置类型，而不是更短。"
+      ],
+      "reading": "《C++ Primer（第 5 版）》第 14 章 14.5 下标运算符、14.4 赋值运算符、14.6 递增和递减运算符、14.7 成员访问运算符、14.9.1 类型转换运算符；cppreference: operator_member_access, operator_incdec",
+      "practice": [
+        "实现 Grid 类（二维 double 数组，用 std::vector<double> 扁平存储）：提供 double& at(int r, int c) 与 const 版本、非 const/const 的 operator[](int r) 返回行视图或行首指针（简化实现可以返回 std::vector<double> 的行拷贝并在注释里说明取舍）。",
+        "给 IntArray 增加前缀 ++ 与后缀 ++ 以外的实用重载：一元 operator-（返回所有元素取反的新对象），并测试 const 对象上调用。"
+      ],
+      "exercises": [
+        {
+          "id": "w2d4e1",
+          "title": "成对的 operator[] 与 at()",
+          "prompt": "实现 IntArray（内部 int* 深拷贝三法则版本，可复用本周代码），要求：\n- int& operator[](int i)：不做边界检查（与 std::vector 一致）；\n- int& at(int i) 与 const int& at(int i) const：越界抛 std::out_of_range；\n- int size() const；\n- 非成员 operator==(const IntArray&, const IntArray&)：长度相同且逐元素相等才为 true。\n验收：\n```cpp\nIntArray a(3, 1), b(3, 1), c(4, 1);\na[1] = 5;\nstd::cout << (a == b) << ' ' << (a == c) << ' ' << (b == b) << '\\n';  // false false true\ntry { a.at(10) = 1; } catch (const std::out_of_range& e) { std::cout << \"catch \" << e.what() << '\\n'; }\n```",
+          "hint": "operator== 写成非成员函数的好处是两侧操作数都能参与隐式转换、且写法对称；实现时先比较 size 再逐元素比较，注意用 at() 或下标但保证不越界（循环上界取 size 的较小者不需要，因为已判定相等）。",
+          "answer": "```cpp\n#include <algorithm>\n#include <iostream>\n#include <stdexcept>\n\nclass IntArray {\npublic:\n    explicit IntArray(int n, int init = 0) : n_(n), data_(new int[n]) {\n        std::fill(data_, data_ + n_, init);\n    }\n    IntArray(const IntArray& o) : n_(o.n_), data_(new int[o.n_]) {\n        std::copy(o.data_, o.data_ + o.n_, data_);\n    }\n    IntArray& operator=(const IntArray& o) {\n        if (this == &o) return *this;\n        int* fresh = new int[o.n_];\n        std::copy(o.data_, o.data_ + o.n_, fresh);\n        delete[] data_;\n        data_ = fresh;\n        n_ = o.n_;\n        return *this;\n    }\n    ~IntArray() { delete[] data_; }\n\n    int& operator[](int i) { return data_[i]; }          // 不检查\n    const int& operator[](int i) const { return data_[i]; }\n\n    int& at(int i) {\n        check(i);\n        return data_[i];\n    }\n    const int& at(int i) const {\n        check(i);\n        return data_[i];\n    }\n    int size() const { return n_; }\n\nprivate:\n    void check(int i) const {\n        if (i < 0 || i >= n_) throw std::out_of_range(\"IntArray 下标越界\");\n    }\n    int n_ = 0;\n    int* data_ = nullptr;\n};\n\nbool operator==(const IntArray& a, const IntArray& b) {\n    if (a.size() != b.size()) return false;\n    for (int i = 0; i < a.size(); ++i)\n        if (a[i] != b[i]) return false;\n    return true;\n}\n\nint main() {\n    IntArray a(3, 1), b(3, 1), c(4, 1);\n    a[1] = 5;\n    std::cout << std::boolalpha << (a == b) << ' ' << (a == c) << ' ' << (b == b) << '\\n';\n    try {\n        a.at(10) = 1;\n    } catch (const std::out_of_range& e) {\n        std::cout << \"catch \" << e.what() << '\\n';\n    }\n}\n```\n关键点：[] 保持与标准库一致的「快但不查」，at() 承担安全检查并抛异常，两者分工明确；operator== 作为非成员函数写法对称，且只依赖 operator[] 与 size()，不需要访问私有成员。",
+          "difficulty": 2
+        },
+        {
+          "id": "w2d4e2",
+          "title": "一元取负与复合赋值",
+          "prompt": "实现 Vec2 类（double x_, y_ 私有），重载：\n- Vec2 operator-() const：返回逐分量取负的新对象（一元负号）；\n- Vec2& operator+=(const Vec2&)：逐分量累加并返回 *this；\n- friend Vec2 operator+(Vec2 lhs, const Vec2& rhs)：用「按值形参 + += 」实现（这是惯用写法）；\n- friend std::ostream& operator<<。\n验收：\n```cpp\nVec2 a(1, 2), b(3, 4);\nstd::cout << (a + b) << '\\n';    // (4, 6)\nstd::cout << (-a) << '\\n';       // (-1, -2)\nconst Vec2 c(10, 20);\nstd::cout << (-c) << '\\n';       // (-10, -20)  const 对象也能取负\nstd::cout << a << '\\n';          // a 未被 + 修改\n```",
+          "hint": "operator+ 的第一个参数按值传递，于是函数体里直接改 lhs 并返回它，不需要先拷贝一份。operator- 是 const 成员函数，因此 const Vec2 也能调用。注意一元负号没有参数，与二元减法的参数个数不同，编译器靠这个区分。",
+          "answer": "```cpp\n#include <iostream>\n\nclass Vec2 {\npublic:\n    Vec2(double x = 0, double y = 0) : x_(x), y_(y) {}\n\n    Vec2 operator-() const { return Vec2(-x_, -y_); }        // 一元负号\n    Vec2& operator+=(const Vec2& o) {\n        x_ += o.x_;\n        y_ += o.y_;\n        return *this;\n    }\n\n    friend Vec2 operator+(Vec2 lhs, const Vec2& rhs) {        // 按值形参即一份拷贝\n        return lhs += rhs;\n    }\n    friend std::ostream& operator<<(std::ostream& os, const Vec2& v) {\n        return os << '(' << v.x_ << \", \" << v.y_ << ')';\n    }\n\nprivate:\n    double x_, y_;\n};\n\nint main() {\n    Vec2 a(1, 2), b(3, 4);\n    std::cout << (a + b) << '\\n';\n    std::cout << (-a) << '\\n';\n    const Vec2 c(10, 20);\n    std::cout << (-c) << '\\n';\n    std::cout << a << '\\n';\n}\n```\n关键点：operator+ 用「按值第一参数 + 复用 +=」实现，代码只有一行且天然不修改操作数；operator- 声明为 const 成员函数，所以 const Vec2 也能参与运算——这是 const 正确性影响可用性的典型例子。",
+          "difficulty": 3
+        }
+      ],
+      "checklist": [
+        "能说出 operator[] 为什么必须成对提供 const 与非 const 版本",
+        "能指出自定义容器的 [] 与 at() 在边界检查上的分工",
+        "能说出 operator+ 按值形参写法的优点"
+      ]
+    },
+    {
+      "id": "w2d5",
+      "weekday": "周五",
+      "title": "移动构造与 std::move 入门",
+      "minutes": 90,
+      "kind": "learn",
+      "learn": [
+        "右值引用 T&& 能绑定到临时对象（即将销毁的值），它的意义是告诉编译器「这个对象的资源可以被偷走」，从而避免深拷贝。",
+        "移动构造的典型实现是「偷指针 + 把源对象置空」：接管对方的资源，再把对方的指针设为 nullptr，保证源对象析构时不会误删已经转移的资源。",
+        "std::move 本身不移动任何东西，它只是把左值强制转换成右值引用（相当于一次类型转换），真正的移动发生在随后的移动构造/移动赋值调用中；对 const 对象用 std::move 会退化成拷贝。",
+        "被移动之后的对象处于「有效但未指定」状态：可以安全地析构、可以重新赋值，但不要假设它的内容（比如不要读 vec.size() 的具体值）。"
+      ],
+      "reading": "《C++ Primer（第 5 版）》第 13 章 13.6 对象移动（13.6.1 右值引用、13.6.2 移动构造函数和移动赋值运算符、13.6.3 右值引用和成员函数）；cppreference: move constructor, std::move",
+      "practice": [
+        "给 IntArray 补上移动构造与移动赋值（noexcept，源对象置空），并写测试：std::move 之后源对象的 size() 为 0、目标对象数据正确。",
+        "写一个 std::vector<IntArray>，分别用 push_back(a)（拷贝）与 push_back(std::move(a))（移动），用 static 计数器统计拷贝次数与移动次数。"
+      ],
+      "exercises": [
+        {
+          "id": "w2d5e1",
+          "title": "给 IntArray 加移动构造与移动赋值",
+          "prompt": "在 IntArray（深拷贝三法则版）基础上增加：\n- IntArray(IntArray&& other) noexcept：接管 other.data_ 与 n_，把 other 置为 {nullptr, 0}；\n- IntArray& operator=(IntArray&& other) noexcept：释放自身资源后接管，并处理自移动（this == &other）；\n- 打印统计：static int copies，static int moves，在拷贝/移动构造函数里各自 ++。\n验收：\n```cpp\nIntArray a(3, 7);\nIntArray b = a;                 // 拷贝\nIntArray c = std::move(a);      // 移动\nstd::cout << \"copies=\" << IntArray::copies() << \" moves=\" << IntArray::moves() << '\\n'; // 1 1\nstd::cout << c.sum() << ' ' << a.size() << '\\n';   // 21 0\na = std::move(c);               // 移动赋值\nstd::cout << a.sum() << ' ' << c.size() << '\\n';   // 21 0\n```",
+          "hint": "移动构造的初始化列表直接写 n_(other.n_), data_(other.data_)，函数体里 other.data_ = nullptr; other.n_ = 0;。移动赋值里判断 this == &other 之后，先 delete[] 自己的 data_，再接管理权。标记 noexcept 很重要：vector 扩容时只对 noexcept 的移动构造放心使用。",
+          "answer": "```cpp\n#include <algorithm>\n#include <iostream>\n#include <utility>\n\nclass IntArray {\npublic:\n    explicit IntArray(int n, int init = 0) : n_(n), data_(new int[n]) {\n        std::fill(data_, data_ + n_, init);\n    }\n    IntArray(const IntArray& o) : n_(o.n_), data_(new int[o.n_]) {\n        std::copy(o.data_, o.data_ + o.n_, data_);\n        ++copies_;\n    }\n    IntArray& operator=(const IntArray& o) {\n        if (this == &o) return *this;\n        int* fresh = new int[o.n_];\n        std::copy(o.data_, o.data_ + o.n_, fresh);\n        delete[] data_;\n        data_ = fresh;\n        n_ = o.n_;\n        ++copies_;\n        return *this;\n    }\n    IntArray(IntArray&& o) noexcept : n_(o.n_), data_(o.data_) {\n        o.n_ = 0;\n        o.data_ = nullptr;          // 源对象不再拥有资源\n        ++moves_;\n    }\n    IntArray& operator=(IntArray&& o) noexcept {\n        if (this == &o) return *this;\n        delete[] data_;             // 释放自己的资源\n        n_ = o.n_;\n        data_ = o.data_;\n        o.n_ = 0;\n        o.data_ = nullptr;\n        ++moves_;\n        return *this;\n    }\n    ~IntArray() { delete[] data_; }\n\n    int size() const { return n_; }\n    int sum() const {\n        int s = 0;\n        for (int i = 0; i < n_; ++i) s += data_[i];\n        return s;\n    }\n    static int copies() { return copies_; }\n    static int moves() { return moves_; }\n\nprivate:\n    int n_ = 0;\n    int* data_ = nullptr;\n    inline static int copies_ = 0;\n    inline static int moves_ = 0;\n};\n\nint main() {\n    IntArray a(3, 7);\n    IntArray b = a;\n    IntArray c = std::move(a);\n    std::cout << \"copies=\" << IntArray::copies() << \" moves=\" << IntArray::moves() << '\\n';\n    std::cout << c.sum() << ' ' << a.size() << '\\n';\n    a = std::move(c);\n    std::cout << a.sum() << ' ' << c.size() << '\\n';\n}\n```\n关键点：移动构造「接管理指针并置空源对象」，所以移动后源对象 size()==0 且析构安全；noexcept 不是装饰，标准容器在扩容时是否采用移动而非拷贝，取决于移动构造是否声明为 noexcept。",
+          "difficulty": 3
+        },
+        {
+          "id": "w2d5e2",
+          "title": "观察 vector 扩容时的拷贝与移动",
+          "prompt": "用上一题的 IntArray（含 copies/moves 计数）：\n1) 声明 std::vector<IntArray> v; 连续 push_back 临时对象（如 v.push_back(IntArray(1000, 1));）直到容量超过 4，打印 copies 与 moves 的变化趋势；\n2) 换成 v.emplace_back(1000, 1); 重新统计，解释差异；\n3) 把 IntArray 的移动构造临时改成「不写 noexcept」（在注释里说明这一步怎么做），观察扩容时 moves 与 copies 的变化，写下结论。\n\n验证标准：你能用输出数据说明「移动构造是 noexcept 时，vector 扩容搬移旧元素走移动；否则可能退回拷贝」。",
+          "hint": "vector 扩容需要把旧元素搬到新缓冲区：如果移动构造是 noexcept，它用移动；否则为了强异常安全只能用拷贝。reserve 一下可以让扩容次数变成 0，对比起来更清楚。",
+          "answer": "```cpp\n#include <algorithm>\n#include <iostream>\n#include <utility>\n#include <vector>\n\nclass IntArray {\npublic:\n    explicit IntArray(int n, int init = 0) : n_(n), data_(new int[n]) {\n        std::fill(data_, data_ + n_, init);\n    }\n    IntArray(const IntArray& o) : n_(o.n_), data_(new int[o.n_]) {\n        std::copy(o.data_, o.data_ + o.n_, data_);\n        ++copies_;\n    }\n    IntArray& operator=(const IntArray& o) {\n        if (this == &o) return *this;\n        int* fresh = new int[o.n_];\n        std::copy(o.data_, o.data_ + o.n_, fresh);\n        delete[] data_;\n        data_ = fresh;\n        n_ = o.n_;\n        ++copies_;\n        return *this;\n    }\n    // 试着删掉下面的 noexcept，观察扩容时是否退化成拷贝\n    IntArray(IntArray&& o) noexcept : n_(o.n_), data_(o.data_) {\n        o.n_ = 0;\n        o.data_ = nullptr;\n        ++moves_;\n    }\n    IntArray& operator=(IntArray&& o) noexcept {\n        if (this == &o) return *this;\n        delete[] data_;\n        n_ = o.n_;\n        data_ = o.data_;\n        o.n_ = 0;\n        o.data_ = nullptr;\n        ++moves_;\n        return *this;\n    }\n    ~IntArray() { delete[] data_; }\n\n    static int copies() { return copies_; }\n    static int moves() { return moves_; }\n    static void reset() { copies_ = moves_ = 0; }\n\nprivate:\n    int n_ = 0;\n    int* data_ = nullptr;\n    inline static int copies_ = 0;\n    inline static int moves_ = 0;\n};\n\nint main() {\n    {\n        std::vector<IntArray> v;\n        for (int i = 0; i < 6; ++i) v.push_back(IntArray(100, 1));\n        std::cout << \"push_back(temp): copies=\" << IntArray::copies()\n                  << \" moves=\" << IntArray::moves() << \" cap=\" << v.capacity() << '\\n';\n    }\n    IntArray::reset();\n    {\n        std::vector<IntArray> v;\n        for (int i = 0; i < 6; ++i) v.emplace_back(100, 1);\n        std::cout << \"emplace_back:    copies=\" << IntArray::copies()\n                  << \" moves=\" << IntArray::moves() << \" cap=\" << v.capacity() << '\\n';\n    }\n    IntArray::reset();\n    {\n        std::vector<IntArray> v;\n        v.reserve(6);\n        for (int i = 0; i < 6; ++i) v.emplace_back(100, 1);\n        std::cout << \"with reserve:    copies=\" << IntArray::copies()\n                  << \" moves=\" << IntArray::moves() << '\\n';\n    }\n}\n```\n关键点：push_back(临时对象) 每次要多一次移动（临时对象搬进容器），emplace_back 直接在容器内存里构造，省掉这一次；扩容搬移旧元素的数量取决于容量增长策略，而 reserve 提前要够空间可以让扩容搬移归零。把移动构造的 noexcept 去掉后，标准库因无法保证强异常安全会改用拷贝，moves 下降、copies 上升。",
+          "difficulty": 3
+        }
+      ],
+      "checklist": [
+        "能解释 std::move 只是类型转换、不产生任何移动动作",
+        "移动后的源对象能安全析构，且你知道它处于「有效但未指定」状态",
+        "能用实测数据说明 noexcept 对 vector 扩容行为的影响"
+      ]
+    },
+    {
+      "id": "w2d6",
+      "weekday": "周六",
+      "title": "项目日：手写动态数组 IntVec",
+      "minutes": 120,
+      "kind": "project",
+      "learn": [
+        "把三法则/五法则落到一个真实容器上：IntVec 需要容量与大小分离（capacity/size）、扩容策略、以及五个特殊成员函数的正确配合。",
+        "扩容是深拷贝与移动的分界点：扩容把旧缓冲区元素搬到新缓冲区，优先用移动（要求移动构造 noexcept），搬完要正确释放旧缓冲区并更新指针。",
+        "容器的接口设计要与标准库保持心智一致：size()/capacity()/empty()/clear()/push_back()/pop_back()/at()，让用户凭已有经验就能用对。"
+      ],
+      "reading": "《C++ Primer（第 5 版）》第 13 章 13.5 动态内存管理类（StrVec 示例，13.5 节整节）、13.1.4 三/五法则",
+      "practice": [
+        "实现 IntVec 的骨架：size_/capacity_/data_ 三个成员，默认构造、explicit IntVec(int n) 构造、析构、拷贝构造、拷贝赋值、移动构造、移动赋值。",
+        "实现 reserve(int newCap)：容量不足时申请新缓冲区、搬移（用 std::move_if_noexcept 或手工循环）、释放旧缓冲区；push_back 在满时按 2 倍扩容。"
+      ],
+      "exercises": [
+        {
+          "id": "w2d6e1",
+          "title": "IntVec 完整实现（五法则 + 扩容）",
+          "prompt": "实现 IntVec（只用裸指针管理内存，不允许内部直接用 std::vector 存数据）：\n- 构造：IntVec()、explicit IntVec(int n, int init = 0)；\n- 析构、拷贝构造、拷贝赋值、移动构造、移动赋值（移动版本 noexcept）；\n- 容量与访问：int size() const、int capacity() const、bool empty() const、int& at(int i)（越界抛 std::out_of_range）、int& operator[](int i) 与非 const 版本；\n- 修改：void push_back(int v)（满则容量翻倍，初始容量 4）、void pop_back()（空则抛 std::out_of_range）、void clear()（size_ 置 0，不释放内存）、void reserve(int cap)；\n- 非成员 operator==：大小相同且逐元素相等。\n验收（必须全部满足）：\n1) 连续 push_back 20 个元素后 size()==20，且打印每个元素正确；\n2) capacity() 的取值序列符合翻倍策略（打印容量变化）；\n3) `IntVec b = a; b.push_back(99);` 后 a 不受影响；\n4) `IntVec c = std::move(a);` 后 c 数据完整、a.size()==0；\n5) `v = v;` 自赋值不崩溃且内容不变；\n6) at(100) 抛出并捕获 std::out_of_range。",
+          "hint": "把「申请新缓冲区 + 搬移 + 释放旧缓冲区」抽成 private 的 void reallocate(int newCap)，push_back 与 reserve 都调用它；拷贝赋值沿用「先申请新内存再释放旧内存」或 copy-and-swap；移动赋值记得判自移动并先释放自身资源。clear() 只重置 size_，capacity_ 与 data_ 保持不变。",
+          "answer": "```cpp\n#include <algorithm>\n#include <iostream>\n#include <stdexcept>\n#include <utility>\n\nclass IntVec {\npublic:\n    IntVec() = default;\n    explicit IntVec(int n, int init = 0) : size_(n), cap_(n), data_(new int[n]) {\n        std::fill(data_, data_ + n, init);\n    }\n    IntVec(const IntVec& o) : size_(o.size_), cap_(o.size_), data_(o.size_ ? new int[o.size_] : nullptr) {\n        std::copy(o.data_, o.data_ + o.size_, data_);\n    }\n    IntVec& operator=(const IntVec& o) {\n        if (this == &o) return *this;\n        int* fresh = o.size_ ? new int[o.size_] : nullptr;\n        std::copy(o.data_, o.data_ + o.size_, fresh);\n        delete[] data_;\n        data_ = fresh;\n        size_ = cap_ = o.size_;\n        return *this;\n    }\n    IntVec(IntVec&& o) noexcept : size_(o.size_), cap_(o.cap_), data_(o.data_) {\n        o.size_ = o.cap_ = 0;\n        o.data_ = nullptr;\n    }\n    IntVec& operator=(IntVec&& o) noexcept {\n        if (this == &o) return *this;\n        delete[] data_;\n        size_ = o.size_;\n        cap_ = o.cap_;\n        data_ = o.data_;\n        o.size_ = o.cap_ = 0;\n        o.data_ = nullptr;\n        return *this;\n    }\n    ~IntVec() { delete[] data_; }\n\n    int size() const { return size_; }\n    int capacity() const { return cap_; }\n    bool empty() const { return size_ == 0; }\n\n    int& at(int i) {\n        check(i);\n        return data_[i];\n    }\n    const int& at(int i) const {\n        check(i);\n        return data_[i];\n    }\n    int& operator[](int i) { return data_[i]; }\n    const int& operator[](int i) const { return data_[i]; }\n\n    void reserve(int cap) {\n        if (cap > cap_) reallocate(cap);\n    }\n    void push_back(int v) {\n        if (size_ == cap_) reallocate(cap_ == 0 ? 4 : cap_ * 2);\n        data_[size_++] = v;\n    }\n    void pop_back() {\n        if (size_ == 0) throw std::out_of_range(\"pop_back on empty\");\n        --size_;\n    }\n    void clear() { size_ = 0; }\n\n    friend bool operator==(const IntVec& a, const IntVec& b) {\n        if (a.size_ != b.size_) return false;\n        for (int i = 0; i < a.size_; ++i)\n            if (a.data_[i] != b.data_[i]) return false;\n        return true;\n    }\n\nprivate:\n    void check(int i) const {\n        if (i < 0 || i >= size_) throw std::out_of_range(\"IntVec 下标越界\");\n    }\n    void reallocate(int newCap) {\n        int* fresh = new int[newCap];\n        for (int i = 0; i < size_; ++i) fresh[i] = std::move(data_[i]);   // 对 int 等价于拷贝，对重类型才是移动\n        delete[] data_;\n        data_ = fresh;\n        cap_ = newCap;\n    }\n\n    int size_ = 0;\n    int cap_ = 0;\n    int* data_ = nullptr;\n};\n\nint main() {\n    IntVec v;\n    for (int i = 0; i < 20; ++i) {\n        v.push_back(i * i);\n        std::cout << \"push \" << i << \" size=\" << v.size() << \" cap=\" << v.capacity() << '\\n';\n    }\n    std::cout << std::boolalpha;\n\n    IntVec a;\n    for (int i = 0; i < 3; ++i) a.push_back(i);\n    IntVec b = a;\n    b.push_back(99);\n    std::cout << \"deep copy: \" << (a.size() == 3) << ' ' << (b.size() == 4) << '\\n';\n\n    IntVec c = std::move(a);\n    std::cout << \"moved: \" << (c.size() == 3) << ' ' << (a.size() == 0) << '\\n';\n\n    c = c;\n    std::cout << \"self assign: \" << c.size() << '\\n';\n\n    try {\n        c.at(100) = 1;\n    } catch (const std::out_of_range& e) {\n        std::cout << \"catch: \" << e.what() << '\\n';\n    }\n}\n```\n关键点：size 与 capacity 分离是容器性能的基础——push_back 均摊 O(1) 靠的是翻倍扩容而不是每次加 1；五个特殊成员函数必须成套正确，尤其移动版本要把源对象置空、拷贝赋值要先申请后释放，才能避免泄漏与自赋值崩溃。",
+          "difficulty": 3
+        },
+        {
+          "id": "w2d6e2",
+          "title": "给 IntVec 加上 insert 与 erase",
+          "prompt": "在上一题的 IntVec 上扩展：\n- void insert(int pos, int v)：在位置 pos 插入（0 <= pos <= size()，越界抛 std::out_of_range），pos 及其后的元素整体后移一位；\n- void erase(int pos)：删除位置 pos 的元素（越界抛 std::out_of_range），后面的元素前移；\n- friend std::ostream& operator<<(std::ostream&, const IntVec&) 输出 [1, 2, 3] 形式。\n验收：\n```cpp\nIntVec v;\nfor (int i = 1; i <= 5; ++i) v.push_back(i);\nv.insert(2, 99);      // [1, 2, 99, 3, 4, 5]\nv.erase(0);           // [2, 99, 3, 4, 5]\nstd::cout << v << '\\n';\nv.insert(5, 77);      // 追加到末尾\nstd::cout << v << '\\n';    // [2, 99, 3, 4, 5, 77]\n```\n注意：插入时需要保证容量足够（不足则扩容），并注意元素后移必须从后往前搬，否则会覆盖数据。",
+          "hint": "insert 先判断 pos 是否合法、必要时 reserve（cap_ * 2 或 size_ + 1），然后从 size_ 开始向前把 data_[i-1] 写到 data_[i]，最后写入 v 并 ++size_。erase 从 pos 开始向后搬移，最后 --size_。",
+          "answer": "```cpp\n#include <algorithm>\n#include <iostream>\n#include <stdexcept>\n#include <utility>\n\nclass IntVec {\npublic:\n    IntVec() = default;\n    explicit IntVec(int n, int init = 0) : size_(n), cap_(n), data_(n ? new int[n] : nullptr) {\n        std::fill(data_, data_ + n, init);\n    }\n    IntVec(const IntVec& o) : size_(o.size_), cap_(o.size_), data_(o.size_ ? new int[o.size_] : nullptr) {\n        std::copy(o.data_, o.data_ + o.size_, data_);\n    }\n    IntVec& operator=(const IntVec& o) {\n        if (this == &o) return *this;\n        int* fresh = o.size_ ? new int[o.size_] : nullptr;\n        std::copy(o.data_, o.data_ + o.size_, fresh);\n        delete[] data_;\n        data_ = fresh;\n        size_ = cap_ = o.size_;\n        return *this;\n    }\n    IntVec(IntVec&& o) noexcept : size_(o.size_), cap_(o.cap_), data_(o.data_) {\n        o.size_ = o.cap_ = 0;\n        o.data_ = nullptr;\n    }\n    IntVec& operator=(IntVec&& o) noexcept {\n        if (this == &o) return *this;\n        delete[] data_;\n        size_ = o.size_;\n        cap_ = o.cap_;\n        data_ = o.data_;\n        o.size_ = o.cap_ = 0;\n        o.data_ = nullptr;\n        return *this;\n    }\n    ~IntVec() { delete[] data_; }\n\n    int size() const { return size_; }\n    int capacity() const { return cap_; }\n    int& at(int i) {\n        check(i);\n        return data_[i];\n    }\n    int& operator[](int i) { return data_[i]; }\n    const int& operator[](int i) const { return data_[i]; }\n\n    void reserve(int cap) {\n        if (cap > cap_) reallocate(cap);\n    }\n    void push_back(int v) {\n        if (size_ == cap_) reallocate(cap_ == 0 ? 4 : cap_ * 2);\n        data_[size_++] = v;\n    }\n    void insert(int pos, int v) {\n        if (pos < 0 || pos > size_) throw std::out_of_range(\"insert 位置越界\");\n        if (size_ == cap_) reallocate(cap_ == 0 ? 4 : cap_ * 2);\n        for (int i = size_; i > pos; --i) data_[i] = data_[i - 1];   // 从后往前搬\n        data_[pos] = v;\n        ++size_;\n    }\n    void erase(int pos) {\n        check(pos);\n        for (int i = pos; i + 1 < size_; ++i) data_[i] = data_[i + 1];\n        --size_;\n    }\n\n    friend std::ostream& operator<<(std::ostream& os, const IntVec& v) {\n        os << '[';\n        for (int i = 0; i < v.size_; ++i) {\n            if (i) os << \", \";\n            os << v.data_[i];\n        }\n        return os << ']';\n    }\n\nprivate:\n    void check(int i) const {\n        if (i < 0 || i >= size_) throw std::out_of_range(\"IntVec 下标越界\");\n    }\n    void reallocate(int newCap) {\n        int* fresh = new int[newCap];\n        std::copy(data_, data_ + size_, fresh);\n        delete[] data_;\n        data_ = fresh;\n        cap_ = newCap;\n    }\n\n    int size_ = 0;\n    int cap_ = 0;\n    int* data_ = nullptr;\n};\n\nint main() {\n    IntVec v;\n    for (int i = 1; i <= 5; ++i) v.push_back(i);\n    v.insert(2, 99);\n    v.erase(0);\n    std::cout << v << '\\n';\n    v.insert(v.size(), 77);\n    std::cout << v << '\\n';\n    try {\n        v.insert(999, 1);\n    } catch (const std::out_of_range& e) {\n        std::cout << \"catch: \" << e.what() << '\\n';\n    }\n}\n```\n关键点：插入元素时必须在搬移之前确保容量足够，否则会写越界；后移必须从最后一个元素开始向前搬，前移必须从 pos 开始向后搬，方向反了就会自我覆盖。允许 pos == size() 的 insert 等价于 push_back，这是标准库也遵循的约定。",
+          "difficulty": 3
+        }
+      ],
+      "checklist": [
+        "IntVec 的六项验收全部通过，且没有内存错误（可用 -fsanitize=address 或 Debug 模式验证）",
+        "能手写五法则的五个函数签名，并说明每个函数里的关键三步",
+        "能解释 size 与 capacity 分离带来的性能收益"
+      ]
+    },
+    {
+      "id": "w2d7",
+      "weekday": "周日",
+      "title": "休息与回顾",
+      "minutes": 30,
+      "kind": "rest",
+      "learn": [
+        "回看本周代码，把「什么时候必须自己写拷贝控制」「三法则与五法则的差别」两条用自己的话重写一遍。"
+      ],
+      "reading": "《C++ Primer（第 5 版）》第 13 章小结、14.1 基本概念（回顾运算符重载的边界）",
+      "practice": [
+        "可选任务：为本周的 IntVec 补一个 std::string 版本的 StringVec（把 int 换成 std::string），体会移动语义在非平凡类型上的收益（用拷贝/移动计数对比）。"
+      ],
+      "exercises": [
+        {
+          "id": "w2d7e1",
+          "title": "轻量自测：这个类该写哪几个特殊成员函数",
+          "prompt": "针对下面三种类，分别指出需要手写哪几个特殊成员函数（析构/拷贝构造/拷贝赋值/移动构造/移动赋值），并各写一句理由。\n1) class Config { std::string path_; int timeout_; };  \n2) class FileHandle { FILE* fp_; };（构造 fopen、析构 fclose）\n3) class Session { std::shared_ptr<Connection> conn_; };\n把这些结论写成 C++ 注释贴在代码里，并给每个类补上你认为正确的声明（= default 或 = delete 或自定义）。",
+          "hint": "判断标准只有一条：类是否「拥有」一份需要手工释放的资源。拥有裸资源必须自己管（三法则），不拥有则一律交给编译器；拥有独占资源时通常还应禁止拷贝或提供移动。",
+          "answer": "```cpp\n#include <cstdio>\n#include <memory>\n#include <string>\n\n// 1) 不拥有资源：全部交给编译器\nclass Config {\npublic:\n    Config() = default;\n    Config(const Config&) = default;\n    Config& operator=(const Config&) = default;\n    ~Config() = default;\nprivate:\n    std::string path_;\n    int timeout_ = 0;\n};\n\n// 2) 独占裸资源：三法则 + 禁止拷贝（或实现深拷贝）+ 允许移动\nclass FileHandle {\npublic:\n    explicit FileHandle(const char* path) : fp_(std::fopen(path, \"r\")) {}\n    ~FileHandle() { if (fp_) std::fclose(fp_); }\n    FileHandle(const FileHandle&) = delete;              // 句柄不该被复制\n    FileHandle& operator=(const FileHandle&) = delete;\n    FileHandle(FileHandle&& o) noexcept : fp_(o.fp_) { o.fp_ = nullptr; }\n    FileHandle& operator=(FileHandle&& o) noexcept {\n        if (this == &o) return *this;\n        if (fp_) std::fclose(fp_);\n        fp_ = o.fp_;\n        o.fp_ = nullptr;\n        return *this;\n    }\n    bool valid() const { return fp_ != nullptr; }\nprivate:\n    FILE* fp_ = nullptr;\n};\n\n// 3) 共享所有权：shared_ptr 自己管计数，五个都交给编译器\nclass Session {\npublic:\n    Session() = default;\n    Session(const Session&) = default;\n    Session& operator=(const Session&) = default;\n    Session(Session&&) = default;\n    Session& operator=(Session&&) = default;\n    ~Session() = default;\nprivate:\n    std::shared_ptr<int> conn_;      // 用 int 代替 Connection 以便本文件可编译\n};\n\nint main() {\n    Config c;\n    FileHandle f(\"不存在的文件.txt\");\n    Session s;\n    (void)c; (void)f; (void)s;\n    return 0;\n}\n```\n关键点：判断依据不是「类里有什么成员」，而是「谁负责释放」——裸指针拥有资源就得自己写三法则并考虑移动；一旦成员自己就是 RAII 类型（string、vector、shared_ptr），默认版本反而是最正确的选择。禁止拷贝的独占资源类必须提供移动，否则连放进容器都做不到。",
+          "difficulty": 2
+        }
+      ],
+      "checklist": [
+        "三种类的特殊成员函数判断与理由都已写下",
+        "能一句话说出「需要自己写拷贝控制的唯一判据」"
+      ]
+    }
+  ]
+}
