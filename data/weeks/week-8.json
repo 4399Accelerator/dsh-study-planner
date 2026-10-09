@@ -1,0 +1,289 @@
+{
+  "week": 8,
+  "title": "第 8 周：现代 C++ 综合实战",
+  "goal": "掌握移动语义、完美转发与 C++17 值语义工具，写出一个带并发入门知识、含文件持久化的命令行通讯录项目。",
+  "days": [
+    {
+      "id": "w8d1",
+      "weekday": "周一",
+      "title": "右值引用与移动语义",
+      "minutes": 90,
+      "kind": "learn",
+      "learn": [
+        "左值有名字、可取地址，纯右值与将亡值属于右值；T&& 绑定右值就是右值引用，用来识别「可以被掏空」的对象。",
+        "移动构造/移动赋值把资源句柄从源对象转移过来并把源置空，省掉一次深拷贝；被移动后的对象处于有效但未指定的状态，只能赋新值或销毁。",
+        "std::move 只是一次「到右值引用的类型转换」，它自己不移动任何东西，真正的转移发生在随后调用的移动构造或移动赋值里。",
+        "移动构造函数应当标 noexcept：vector 扩容时若元素的移动构造可能抛异常，标准库会退回使用拷贝构造来保证强异常安全。"
+      ],
+      "reading": "《C++ Primer（第 5 版）》第 13 章 13.6 右值引用与移动语义、13.6.2 移动构造函数与移动赋值运算符；cppreference: std::move、Move constructor",
+      "practice": [
+        "给一个持有裸指针的 Buffer 类补齐析构、拷贝构造、拷贝赋值、移动构造、移动赋值五个特殊成员函数，每步打印日志。",
+        "用 std::move 触发一次移动并打印源对象的状态，确认资源确实被转移而不是复制。"
+      ],
+      "exercises": [
+        {
+          "id": "w8d1e1",
+          "title": "五个特殊成员函数与一次真正的移动",
+          "prompt": "实现类 `Buffer`：构造函数 `explicit Buffer(std::size_t n)` 在堆上申请 n 字节并打印 `ctor size=n`；五个特殊成员函数全部手写并打印各自名字（copy ctor / copy assign / move ctor / move assign / dtor）；提供 size() 与 empty()（empty 表示数据指针为空）。main 中依次执行拷贝构造、移动构造、移动赋值、拷贝赋值，并打印每一步之后源对象是否 empty、目标对象的 size。验收：移动之后源对象 empty() 为 true 且 size() 为 0，全程没有内存错误。",
+          "hint": "移动构造直接接管指针并把源的指针置为 nullptr、size 置 0；移动赋值要先 delete 自己原有的数据（并自赋值判断），再接管。拷贝赋值建议先 new 再 delete，避免自我赋值时数据被提前释放。",
+          "answer": "```cpp\n#include <cstddef>\n#include <cstring>\n#include <iostream>\n#include <utility>\n\nclass Buffer {\npublic:\n    explicit Buffer(std::size_t n) : size_(n), data_(new char[n]) {\n        std::cout << \"ctor size=\" << n << std::endl;\n    }\n\n    ~Buffer() {\n        delete[] data_;\n        std::cout << \"dtor\" << std::endl;\n    }\n\n    Buffer(const Buffer& other) : size_(other.size_), data_(new char[other.size_]) {\n        std::memcpy(data_, other.data_, size_);\n        std::cout << \"copy ctor\" << std::endl;\n    }\n\n    Buffer& operator=(const Buffer& other) {\n        std::cout << \"copy assign\" << std::endl;\n        if (this == &other) return *this;\n        char* fresh = new char[other.size_];\n        std::memcpy(fresh, other.data_, other.size_);\n        delete[] data_;\n        data_ = fresh;\n        size_ = other.size_;\n        return *this;\n    }\n\n    Buffer(Buffer&& other) noexcept : size_(other.size_), data_(other.data_) {\n        other.data_ = nullptr;\n        other.size_ = 0;\n        std::cout << \"move ctor\" << std::endl;\n    }\n\n    Buffer& operator=(Buffer&& other) noexcept {\n        std::cout << \"move assign\" << std::endl;\n        if (this == &other) return *this;\n        delete[] data_;\n        data_ = other.data_;\n        size_ = other.size_;\n        other.data_ = nullptr;\n        other.size_ = 0;\n        return *this;\n    }\n\n    std::size_t size() const { return size_; }\n    bool empty() const { return data_ == nullptr; }\n\nprivate:\n    std::size_t size_;\n    char* data_;\n};\n\nint main() {\n    Buffer a(4);\n    Buffer b = a;\n    std::cout << \"after copy: b.size=\" << b.size() << \" a.empty=\" << a.empty() << std::endl;\n\n    Buffer c = std::move(a);\n    std::cout << \"after move ctor: c.size=\" << c.size() << \" a.empty=\" << a.empty() << std::endl;\n\n    Buffer d(2);\n    d = std::move(c);\n    std::cout << \"after move assign: d.size=\" << d.size() << \" c.empty=\" << c.empty() << std::endl;\n\n    b = d;\n    std::cout << \"after copy assign: b.size=\" << b.size() << std::endl;\n}\n```\n移动的本质是「偷走指针 + 把源置空」，所以源对象仍可安全析构，不会出现 double free。拷贝赋值先分配再释放旧内存，即使 new 抛异常也不会破坏原对象，这是基本的异常安全写法；自赋值判断在两个赋值运算符中都不可省。",
+          "difficulty": 2
+        },
+        {
+          "id": "w8d1e2",
+          "title": "noexcept 移动如何影响 vector 扩容",
+          "prompt": "定义两个统计型类：`Fast` 的移动构造与移动赋值标了 noexcept，`Slow` 的没标；两者的拷贝构造与拷贝赋值都让全局计数器 copied 加一，移动版本让 moved 加一。写模板函数 `fill(std::vector<T>&, int n)` 用 push_back 连续插入 n 个元素，分别对 `std::vector<Fast>` 与 `std::vector<Slow>` 插入 100 个元素并打印 moved/copied 次数。验收：Fast 的 copied 为 0，Slow 的 copied 明显大于 0，并能解释原因。",
+          "hint": "vector 扩容时若元素的移动构造不保证 noexcept，标准库为保持强异常安全会改用拷贝；push_back 单个临时对象仍会走移动构造，所以 Slow 的 moved 也不为 0。",
+          "answer": "```cpp\n#include <iostream>\n#include <vector>\n\nstruct Counter {\n    static int moved;\n    static int copied;\n    static void reset() { moved = 0; copied = 0; }\n};\nint Counter::moved = 0;\nint Counter::copied = 0;\n\nclass Fast {\npublic:\n    Fast() = default;\n    Fast(const Fast&) { ++Counter::copied; }\n    Fast(Fast&&) noexcept { ++Counter::moved; }\n    Fast& operator=(const Fast&) { ++Counter::copied; return *this; }\n    Fast& operator=(Fast&&) noexcept { ++Counter::moved; return *this; }\n};\n\nclass Slow {\npublic:\n    Slow() = default;\n    Slow(const Slow&) { ++Counter::copied; }\n    Slow(Slow&&) { ++Counter::moved; }\n    Slow& operator=(const Slow&) { ++Counter::copied; return *this; }\n    Slow& operator=(Slow&&) { ++Counter::moved; return *this; }\n};\n\ntemplate <typename T>\nvoid fill(std::vector<T>& v, int n) {\n    for (int i = 0; i < n; ++i) v.push_back(T{});\n}\n\nint main() {\n    std::vector<Fast> f;\n    Counter::reset();\n    fill(f, 100);\n    std::cout << \"Fast: moved=\" << Counter::moved << \" copied=\" << Counter::copied << std::endl;\n\n    std::vector<Slow> s;\n    Counter::reset();\n    fill(s, 100);\n    std::cout << \"Slow: moved=\" << Counter::moved << \" copied=\" << Counter::copied << std::endl;\n}\n```\n扩容时 vector 需要把旧元素搬到新内存：Fast 的移动是 noexcept，直接移动；Slow 的移动可能抛异常，标准库为保持强异常安全改用拷贝，于是 copied 大量出现。把移动构造标成 noexcept 是廉价的性能开关，这也是 std::vector<std::string> 扩容很快的原因。",
+          "difficulty": 3
+        }
+      ],
+      "checklist": [
+        "能说出左值、右值、std::move 各自是什么",
+        "Buffer 移动后源对象 empty() 为 true，程序无内存错误",
+        "Fast 的 copied 为 0 而 Slow 的 copied 大于 0，能解释差别",
+        "能复述「被移动对象处于有效但未指定状态」的含义"
+      ]
+    },
+    {
+      "id": "w8d2",
+      "weekday": "周二",
+      "title": "完美转发与引用折叠",
+      "minutes": 90,
+      "kind": "learn",
+      "learn": [
+        "在模板推导语境下 T&& 是转发引用（万能引用）：传左值时 T 推导为 U&，传右值时 T 推导为 U，因此同一个函数能同时接住两者。",
+        "引用折叠规则只有四种：& + & 得 &，其余组合（& + &&、&& + &、&& + &&）都折叠成 &&，这是万能引用能绑定左值的底层机制。",
+        "std::forward<T>(arg) 按 T 的原始形态还原值类别，这才是「完美转发」；对万能引用参数写 std::move 会把传进来的左值也搬空，是常见事故。",
+        "转发函数模板配可变参数就是工厂函数的标准写法：make_xxx(Args&&... args) 内部用 std::forward<Args>(args)... 一次构造，值类别全程不丢。"
+      ],
+      "reading": "《C++ Primer（第 5 版）》第 16 章 16.2.5 理解 std::move、16.2.6 理解 std::forward；cppreference: Reference declaration（引用折叠）、std::forward、std::make_unique",
+      "practice": [
+        "实现自己的 make_thing 工厂模板（不调用 std::make_unique），用完美转发构造对象并返回 unique_ptr。",
+        "写一个转发包装函数，分别用 std::move 与 std::forward 转发同一个左值参数，观察调用者的变量是否被搬空。"
+      ],
+      "exercises": [
+        {
+          "id": "w8d2e1",
+          "title": "自己的 make_unique",
+          "prompt": "定义 `struct Person { Person(std::string name, int age); std::string name; int age; };`，实现 `template <typename T, typename... Args> std::unique_ptr<T> make_thing(Args&&... args)`，内部用 `new T(std::forward<Args>(args)...)` 构造并返回 unique_ptr。main 中分别用临时 std::string、左值 std::string、std::move(name) 三种方式各构造一个 Person，并在移动后打印原字符串确认它已被搬空。",
+          "hint": "转发引用参数必须写 Args&&（不要写 const Args&），转发时必须写 std::forward<Args>(args)...；左值传参时 name 不会被移动，只有 std::move(name) 才会。",
+          "answer": "```cpp\n#include <iostream>\n#include <memory>\n#include <string>\n#include <utility>\n\nstruct Person {\n    Person(std::string name, int age) : name(std::move(name)), age(age) {\n        std::cout << \"Person(\" << this->name << \",\" << age << \")\" << std::endl;\n    }\n    std::string name;\n    int age;\n};\n\ntemplate <typename T, typename... Args>\nstd::unique_ptr<T> make_thing(Args&&... args) {\n    return std::unique_ptr<T>(new T(std::forward<Args>(args)...));\n}\n\nint main() {\n    auto p = make_thing<Person>(std::string(\"amy\"), 30);\n    std::cout << \"p=\" << p->name << ' ' << p->age << std::endl;\n\n    std::string name = \"bob\";\n    auto q = make_thing<Person>(name, 25);\n    std::cout << \"name still=[\" << name << \"] q=\" << q->name << std::endl;\n\n    auto r = make_thing<Person>(std::move(name), 20);\n    std::cout << \"name after move=[\" << name << \"] r=\" << r->name << std::endl;\n}\n```\n这一行 `new T(std::forward<Args>(args)...)` 就是标准库 make_unique 的核心：perfect forwarding 让左值仍以左值传递（走拷贝），右值以右值传递（走移动）。若把 std::forward 换成 std::move，左值参数在调用者不知情的情况下被搬空，这正是转发函数最容易犯的错。",
+          "difficulty": 2
+        },
+        {
+          "id": "w8d2e2",
+          "title": "用转发引用识别值类别",
+          "prompt": "实现 `template <typename T> void categorize(T&& value)`：用 `if constexpr (std::is_lvalue_reference_v<T>)` 判断并打印 `lvalue` 或 `rvalue`。main 中分别传入左值 int、const int 左值、字面量 5、std::move(左值)、字符串字面量，打印五行结果。验收：前两行与最后一行是 lvalue，中间两行是 rvalue。",
+          "hint": "T&& 在这里是转发引用而不是右值引用，判断标准是 T 是否被推导为引用类型；不要用 is_rvalue_reference<T> 因为右值情况下 T 是非引用类型。",
+          "answer": "```cpp\n#include <iostream>\n#include <type_traits>\n#include <utility>\n\ntemplate <typename T>\nvoid categorize(T&&) {\n    if constexpr (std::is_lvalue_reference_v<T>) {\n        std::cout << \"lvalue\" << std::endl;\n    } else {\n        std::cout << \"rvalue\" << std::endl;\n    }\n}\n\nint main() {\n    int a = 1;\n    const int b = 2;\n    categorize(a);\n    categorize(b);\n    categorize(5);\n    categorize(std::move(a));\n    categorize(\"literal\");\n}\n```\n传左值时 T 推导为 int&（引用折叠后 T&& 就是 int&），传右值时 T 推导为 int，所以「T 是不是左值引用」正好等价于「实参是不是左值」。字符串字面量是左值，被推导为 const char(&)[8]，因此同样打印 lvalue——转发引用对数组也不会退化成指针。",
+          "difficulty": 3
+        }
+      ],
+      "checklist": [
+        "能写出四条引用折叠规则并解释万能引用的来历",
+        "make_thing 三种传参方式行为正确，移动后原字符串为空",
+        "categorize 五行输出符合预期",
+        "能说清 std::forward 与 std::move 的使用场合差异"
+      ]
+    },
+    {
+      "id": "w8d3",
+      "weekday": "周三",
+      "title": "std::optional、std::variant 与 std::string_view",
+      "minutes": 90,
+      "kind": "learn",
+      "learn": [
+        "std::optional<T> 表达「可能有值也可能没有」：用 has_value() 或 if (opt) 判断，value() 在无值时抛 std::bad_optional_access，value_or(x) 提供兜底值。",
+        "std::variant<A,B> 是类型安全的联合体：用 holds_alternative/get_if 查询当前类型，用 std::visit 让编译器为每个可能类型各生成一份分支代码。",
+        "std::string_view 是不拥有数据的字符串视图，构造与切片都是零拷贝，但只要源字符串被销毁或被修改，视图立刻悬垂。",
+        "这三者都是 C++17 的值语义工具，用来替换「返回 -1 表示失败」「void* 加类型标签」「const char* 加长度」这类易错的隐式约定。"
+      ],
+      "reading": "《C++ Primer（第 5 版）》第 17 章 17.1 标准库特殊设施（tuple、bitset 等值语义工具的思想）；cppreference: std::optional、std::variant、std::string_view",
+      "practice": [
+        "把一个「返回 -1 表示失败」的解析函数改写成返回 std::optional<int>，调用方用 value_or 与 if 两种风格处理。",
+        "用 std::variant<double, std::string> 表示「数值或错误信息」，用 std::visit 打印两种结果。"
+      ],
+      "exercises": [
+        {
+          "id": "w8d3e1",
+          "title": "用 optional 表达可能失败的解析",
+          "prompt": "实现 `std::optional<int> parse_int(const std::string& s)`，只接受可选的 +/- 号加至少一位数字，其余（空串、只有符号、含非数字字符）一律返回 std::nullopt，不允许抛异常。main 中分别对 \"42\"、\"-7\"、\"abc\"、\"12x\" 调用：前两个用 value_or(-1) 打印结果，后两个用 if (auto v = parse_int(...)) 判断并打印是否解析成功。验收：输出 42、-7、no value、no value。",
+          "hint": "先处理符号位再逐字符检查是否落在 '0'~'9'，遇到非法字符立刻返回 nullopt；结果用 value * 10 + (s[i] - '0') 累积。",
+          "answer": "```cpp\n#include <iostream>\n#include <optional>\n#include <string>\n\nstd::optional<int> parse_int(const std::string& s) {\n    if (s.empty()) return std::nullopt;\n    std::size_t i = 0;\n    bool negative = false;\n    if (s[0] == '+' || s[0] == '-') {\n        negative = (s[0] == '-');\n        i = 1;\n        if (s.size() == 1) return std::nullopt;\n    }\n    int value = 0;\n    for (; i < s.size(); ++i) {\n        if (s[i] < '0' || s[i] > '9') return std::nullopt;\n        value = value * 10 + (s[i] - '0');\n    }\n    return negative ? -value : value;\n}\n\nint main() {\n    std::cout << parse_int(\"42\").value_or(-1) << std::endl;\n    std::cout << parse_int(\"-7\").value_or(-1) << std::endl;\n\n    if (auto v = parse_int(\"abc\")) std::cout << \"got \" << *v << std::endl;\n    else std::cout << \"no value\" << std::endl;\n\n    if (auto v = parse_int(\"12x\")) std::cout << \"got \" << *v << std::endl;\n    else std::cout << \"no value\" << std::endl;\n}\n```\noptional 把「失败」编码进返回类型，调用方无法忽略它，也不会把 -1 这类哨兵值误当成合法数据。`if (auto v = opt)` 是 C++17 的初始化语句加 bool 转换，等价于先判断 has_value 再解引用。",
+          "difficulty": 2
+        },
+        {
+          "id": "w8d3e2",
+          "title": "用 variant 表示「结果或错误」",
+          "prompt": "定义 `using Result = std::variant<double, std::string>;`，实现 `Result safe_divide(double a, double b)`：b 为 0 时返回错误字符串 `division by zero`，否则返回商。main 中用 std::visit 打印两个结果（10/4 与 1/0），再用 holds_alternative 判断第一个结果是否为 double，用 get_if 取出第二个结果的错误信息。验收：输出 2.5、division by zero，holds=1，并能取到错误信息。",
+          "hint": "std::visit 的 visitor 可以用泛型 lambda（参数写 const auto&），它会为 variant 的每个候选类型各实例化一次；get_if 返回指针，取不到时返回 nullptr。",
+          "answer": "```cpp\n#include <iostream>\n#include <string>\n#include <variant>\n\nusing Result = std::variant<double, std::string>;\n\nResult safe_divide(double a, double b) {\n    if (b == 0.0) return std::string(\"division by zero\");\n    return a / b;\n}\n\nint main() {\n    const Result ok = safe_divide(10.0, 4.0);\n    const Result bad = safe_divide(1.0, 0.0);\n\n    std::visit([](const auto& v) { std::cout << v << std::endl; }, ok);\n    std::visit([](const auto& v) { std::cout << v << std::endl; }, bad);\n\n    std::cout << \"holds double: \" << std::holds_alternative<double>(ok) << std::endl;\n\n    if (const std::string* err = std::get_if<std::string>(&bad)) {\n        std::cout << \"error=[\" << *err << \"]\" << std::endl;\n    } else {\n        std::cout << \"bad holds a double\" << std::endl;\n    }\n}\n```\nvariant 的当前类型是运行期信息，因此取错类型时 get 会抛 std::bad_variant_access，而 get_if 通过返回 nullptr 让你显式处理「类型不符」。std::visit 的泛型 lambda 让编译器为每个候选类型生成一份分支，比手写 if-else 加类型标签更安全。",
+          "difficulty": 3
+        }
+      ],
+      "checklist": [
+        "能说出 optional 与「返回哨兵值」相比的两个好处",
+        "parse_int 四种输入输出与预期一致",
+        "safe_divide 两种结果都能正确打印并能用 get_if 取错误信息",
+        "能说明 string_view 的悬垂风险来自哪里"
+      ]
+    },
+    {
+      "id": "w8d4",
+      "weekday": "周四",
+      "title": "并发入门：thread、mutex、atomic、async",
+      "minutes": 90,
+      "kind": "learn",
+      "learn": [
+        "std::thread 启动后必须 join（等它结束）或 detach，对象析构时仍处于 joinable 状态会直接调用 std::terminate。",
+        "多个线程无同步地读写同一变量是数据竞争，属于未定义行为；用 std::mutex 加 std::lock_guard 在作用域内成对加解锁，异常时也能自动释放。",
+        "std::atomic<T> 对单个变量的读改写是原子的，适合计数器；但它无法保证「多个变量一起变化」的一致性，那种情况仍需要互斥锁。",
+        "std::async 返回 std::future，get() 会阻塞等待结果并在调用线程重新抛出任务里的异常，适合「主线程等待若干个计算任务」的场景。"
+      ],
+      "reading": "《C++ Primer（第 5 版）》第 17 章 17.1 标准库特殊设施（标准库设施的整体组织方式）；cppreference: std::thread、std::mutex、std::atomic、std::async",
+      "practice": [
+        "起 4 个线程各把共享计数器加 1000000 次，先不加锁跑一次观察错误结果，再用 std::atomic 得到正确值。",
+        "用 std::async 并行计算两段数据的平方和并用 get() 汇总，再用 mutex 保护多线程写同一个 vector。Linux 下编译加 -pthread。"
+      ],
+      "exercises": [
+        {
+          "id": "w8d4e1",
+          "title": "数据竞争与 atomic 修正",
+          "prompt": "写程序：4 个线程各自把同一个 `long long` 计数器加 1000000 次，第一轮用普通变量（不加锁），打印结果与期望值 4000000 的差距；第二轮改用 `std::atomic<long long>` 并调用 fetch_add，打印结果确认等于 4000000。所有线程都必须 join。验收：第一轮结果通常小于 4000000，第二轮严格等于 4000000。",
+          "hint": "普通变量的 ++ 是「读-改-写」三步，多个线程交错执行会丢更新；fetch_add 把这三步变成一条不可分割的原子操作。",
+          "answer": "```cpp\n#include <atomic>\n#include <iostream>\n#include <thread>\n#include <vector>\n\nint main() {\n    const int per_thread = 1000000;\n    const int thread_count = 4;\n    const long long expected = static_cast<long long>(per_thread) * thread_count;\n\n    long long unsafe_counter = 0;\n    {\n        std::vector<std::thread> pool;\n        for (int i = 0; i < thread_count; ++i) {\n            pool.emplace_back([&unsafe_counter, per_thread] {\n                for (int j = 0; j < per_thread; ++j) ++unsafe_counter;\n            });\n        }\n        for (std::thread& t : pool) t.join();\n    }\n    std::cout << \"unsafe=\" << unsafe_counter << \" expected=\" << expected << std::endl;\n\n    std::atomic<long long> safe_counter{0};\n    {\n        std::vector<std::thread> pool;\n        for (int i = 0; i < thread_count; ++i) {\n            pool.emplace_back([&safe_counter, per_thread] {\n                for (int j = 0; j < per_thread; ++j)\n                    safe_counter.fetch_add(1, std::memory_order_relaxed);\n            });\n        }\n        for (std::thread& t : pool) t.join();\n    }\n    std::cout << \"safe=\" << safe_counter.load() << std::endl;\n}\n```\n第一轮的 ++ 不是原子操作，多个线程可能同时读到同一个旧值，因此结果通常小于期望值（注意这本身已经是未定义行为，只能作为反例观察）。第二轮用 fetch_add 保证每次自增不可分割；因为只有一个变量、不需要与其他内存操作建立顺序，用 memory_order_relaxed 就够了。",
+          "difficulty": 2
+        },
+        {
+          "id": "w8d4e2",
+          "title": "async 求和平行 + 用 mutex 保护共享容器",
+          "prompt": "实现 `long long square_sum(const std::vector<int>& v)` 返回元素平方和。main 中：(1) 用两次 `std::async(std::launch::async, ...)` 分别计算 {1,2,3,4} 与 {5,6,7} 的平方和，用 future::get 相加并打印（期望 140）；(2) 起两个线程各自向同一个 `std::vector<int>` 追加 100 个元素，用 `std::lock_guard<std::mutex>` 保护 push_back，join 后打印 vector 的 size（期望 200）。",
+          "hint": "async 的返回值要存在 future 里，get() 只能调用一次且会阻塞；mutex 与 lock_guard 必须定义在 main 栈上并被 lambda 按引用捕获。Linux 编译需要加 -pthread。",
+          "answer": "```cpp\n#include <future>\n#include <iostream>\n#include <mutex>\n#include <thread>\n#include <vector>\n\nlong long square_sum(const std::vector<int>& v) {\n    long long sum = 0;\n    for (int x : v) sum += static_cast<long long>(x) * x;\n    return sum;\n}\n\nint main() {\n    const std::vector<int> a{1, 2, 3, 4};\n    const std::vector<int> b{5, 6, 7};\n\n    std::future<long long> fa = std::async(std::launch::async, square_sum, a);\n    std::future<long long> fb = std::async(std::launch::async, square_sum, b);\n    std::cout << \"total=\" << fa.get() + fb.get() << std::endl;\n\n    std::vector<int> shared;\n    std::mutex mtx;\n    auto worker = [&shared, &mtx](int base) {\n        for (int i = 0; i < 100; ++i) {\n            std::lock_guard<std::mutex> lock(mtx);\n            shared.push_back(base + i);\n        }\n    };\n\n    std::thread t1(worker, 0);\n    std::thread t2(worker, 1000);\n    t1.join();\n    t2.join();\n    std::cout << \"shared size=\" << shared.size() << std::endl;\n}\n```\nasync 的 launch::async 策略保证任务真的在另一个线程上跑（默认策略可能被推迟到 get 时才执行）。push_back 可能重新分配内存，属于典型的非线程安全操作，必须用锁把「修改容器」的整段代码串行化；lock_guard 在作用域结束时自动解锁，异常也不会漏解锁。",
+          "difficulty": 3
+        }
+      ],
+      "checklist": [
+        "能说出线程没 join 就析构会发生什么",
+        "第一轮计数结果小于期望值、第二轮严格等于 4000000",
+        "async 版本输出 140，mutex 版本 size 为 200",
+        "编译时知道 Linux 需要 -pthread，并理解 lock_guard 的 RAII 作用"
+      ]
+    },
+    {
+      "id": "w8d5",
+      "weekday": "周五",
+      "title": "项目阶段一：通讯录的数据模型与增删改查",
+      "minutes": 90,
+      "kind": "practice",
+      "learn": [
+        "项目分三层最容易维护：数据模型（Contact 结构体）、存储层（ContactBook 管容器与增删改查）、交互层（菜单与输入解析），每层都能单独测试。",
+        "用 std::map<std::string, Contact> 以姓名为键，天然去重且查找 O(log n)，同时让遍历输出按姓名有序；需要按其他字段排序时再复制到 vector。",
+        "「查无此人」这类可预期结果适合用返回 bool 或指针（nullptr）表达，异常留给真正反常的情况，接口语义比强行抛异常更清晰。",
+        "输入校验要显式处理边界：std::getline 可能读失败、std::stoi 会抛 std::invalid_argument，坏输入必须在进入数据层之前被拦下。"
+      ],
+      "reading": "《C++ Primer（第 5 版）》第 11 章 11.3 关联容器操作、第 8 章 8.1 IO 类（输入校验）；cppreference: std::map、std::getline、std::stoi",
+      "practice": [
+        "搭出 Contact 与 ContactBook 骨架，实现 add/remove/find/list 四个操作并写最小 main 验证每个分支。",
+        "给手机号字段写一个校验函数（必须 11 位数字），拒绝非法输入并把错误信息返回给调用层。"
+      ],
+      "exercises": [
+        {
+          "id": "w8d5e1",
+          "title": "ContactBook 的四个基本操作",
+          "prompt": "定义 `struct Contact { std::string name; std::string phone; std::string email; };`，实现类 `ContactBook`：`bool add(const Contact&)`（姓名已存在返回 false 且不覆盖）、`bool remove(const std::string&)`、`const Contact* find(const std::string&) const`（找不到返回 nullptr）、`std::vector<Contact> list() const`、`std::size_t size() const`，内部用 `std::map<std::string, Contact>`。main 中插入 amy、bob，再次插入 amy 验证返回 false，查找 bob 与不存在的 zed，删除 bob 与 zed，最后列出剩余联系人。验收：重复 add 返回 0，find(\"zed\") 为 nullptr，remove(\"zed\") 返回 0，列表只剩 amy。",
+          "hint": "add 用 emplace(...).second；find 返回迭代器所指对象的地址（map 节点稳定，返回指针安全）；list 遍历 map 依次 push_back 即可，输出天然按姓名有序。",
+          "answer": "```cpp\n#include <iostream>\n#include <map>\n#include <string>\n#include <vector>\n\nstruct Contact {\n    std::string name;\n    std::string phone;\n    std::string email;\n};\n\nclass ContactBook {\npublic:\n    bool add(const Contact& c) {\n        return contacts_.emplace(c.name, c).second;\n    }\n\n    bool remove(const std::string& name) {\n        return contacts_.erase(name) == 1;\n    }\n\n    const Contact* find(const std::string& name) const {\n        auto it = contacts_.find(name);\n        if (it == contacts_.end()) return nullptr;\n        return &it->second;\n    }\n\n    std::vector<Contact> list() const {\n        std::vector<Contact> out;\n        out.reserve(contacts_.size());\n        for (const auto& kv : contacts_) out.push_back(kv.second);\n        return out;\n    }\n\n    std::size_t size() const { return contacts_.size(); }\n\nprivate:\n    std::map<std::string, Contact> contacts_;\n};\n\nint main() {\n    ContactBook book;\n    std::cout << \"add amy=\" << book.add({\"amy\", \"13800000001\", \"amy@example.com\"})\n              << \" add bob=\" << book.add({\"bob\", \"13800000002\", \"bob@example.com\"})\n              << \" add amy again=\" << book.add({\"amy\", \"13900000000\", \"x@example.com\"})\n              << std::endl;\n\n    if (const Contact* c = book.find(\"bob\"))\n        std::cout << \"found: \" << c->name << ' ' << c->phone << std::endl;\n    else\n        std::cout << \"bob not found\" << std::endl;\n    std::cout << \"find zed is null: \" << (book.find(\"zed\") == nullptr) << std::endl;\n\n    std::cout << \"remove bob=\" << book.remove(\"bob\")\n              << \" remove zed=\" << book.remove(\"zed\") << std::endl;\n\n    for (const Contact& c : book.list())\n        std::cout << c.name << ',' << c.phone << ',' << c.email << std::endl;\n    std::cout << \"size=\" << book.size() << std::endl;\n}\n```\nmap 的节点在插入后地址稳定，因此 find 返回指向节点内部的指针是安全的（只要不在持有期间删除该元素）。list() 返回的是值拷贝，调用方随便改都影响不到通讯录本体，这是接口设计上的隔离。",
+          "difficulty": 2
+        },
+        {
+          "id": "w8d5e2",
+          "title": "按指定字段排序输出",
+          "prompt": "在 ContactBook 上增加 `enum class SortField { Name, Phone };` 与 `std::vector<Contact> sorted_by(SortField field) const`：Name 时按姓名升序，Phone 时按电话号码升序、号码相同再按姓名升序。实现方式是把 map 的内容复制进 vector 后用 std::sort 加比较器。main 中插入 amy/13800000003、bob/13800000001、cy/13800000002，分别按两种字段打印。验收：按姓名输出 amy、bob、cy；按电话输出 bob、cy、amy。",
+          "hint": "比较器需要捕获 field，用 if (field == SortField::Phone) 分支处理两种规则；枚举做参数时按值传即可。",
+          "answer": "```cpp\n#include <algorithm>\n#include <iostream>\n#include <map>\n#include <string>\n#include <vector>\n\nstruct Contact {\n    std::string name;\n    std::string phone;\n};\n\nenum class SortField { Name, Phone };\n\nclass ContactBook {\npublic:\n    bool add(const Contact& c) {\n        return contacts_.emplace(c.name, c).second;\n    }\n\n    std::vector<Contact> sorted_by(SortField field) const {\n        std::vector<Contact> out;\n        out.reserve(contacts_.size());\n        for (const auto& kv : contacts_) out.push_back(kv.second);\n\n        std::sort(out.begin(), out.end(), [field](const Contact& a, const Contact& b) {\n            if (field == SortField::Phone) {\n                if (a.phone != b.phone) return a.phone < b.phone;\n                return a.name < b.name;\n            }\n            return a.name < b.name;\n        });\n        return out;\n    }\n\nprivate:\n    std::map<std::string, Contact> contacts_;\n};\n\nint main() {\n    ContactBook book;\n    book.add({\"amy\", \"13800000003\"});\n    book.add({\"bob\", \"13800000001\"});\n    book.add({\"cy\", \"13800000002\"});\n\n    std::cout << \"by name: \";\n    for (const Contact& c : book.sorted_by(SortField::Name)) std::cout << c.name << ' ';\n    std::cout << std::endl;\n\n    std::cout << \"by phone: \";\n    for (const Contact& c : book.sorted_by(SortField::Phone))\n        std::cout << c.name << '(' << c.phone << \") \";\n    std::cout << std::endl;\n}\n```\n排序策略用枚举表达、用捕获了枚举的 lambda 实现，等于把第 6 周学的「比较器就是数据」落到了实际功能上。map 保证的只是按姓名有序，任何其他顺序都必须显式排序，这一点在设计接口时要说清楚。",
+          "difficulty": 3
+        }
+      ],
+      "checklist": [
+        "ContactBook 五个接口都能独立跑通，重复插入与查无此人的语义正确",
+        "排序函数两种字段的输出与预期一致",
+        "能说出为什么用 map 作主存储、什么情况下要换成 vector",
+        "写下明天要实现的持久化文件格式（字段分隔与行结构）"
+      ]
+    },
+    {
+      "id": "w8d6",
+      "weekday": "周六",
+      "title": "项目阶段二：持久化、排序、异常与所有权收尾",
+      "minutes": 120,
+      "kind": "project",
+      "learn": [
+        "文件持久化用 <fstream>：写用 std::ofstream 逐行输出，读用 std::ifstream + std::getline 逐行解析，每行一个联系人、字段用逗号分隔。",
+        "要区分「文件不存在」与「文件打不开」：第一次运行读不到文件是正常情况，load 应该返回 false 而不是抛异常；写失败才值得报错。",
+        "排序输出复用第 6 周的算法：把数据复制到 vector，用 sort 加捕获了排序字段的比较器，比试图让 map 支持多种顺序简单得多。",
+        "自定义异常继承 std::runtime_error，让调用方既能用 catch (const std::exception&) 统一兜底，也能按具体类型精确处理；unique_ptr 用来表达「独占拥有某对象」的所有权。"
+      ],
+      "reading": "《C++ Primer（第 5 版）》第 8 章 8.2 文件输入输出、第 18 章 18.1 异常处理、第 12 章 12.1 动态内存与智能指针；cppreference: std::basic_fstream、std::runtime_error、std::unique_ptr",
+      "practice": [
+        "给通讯录实现 save(path)/load(path)，格式为 name,phone,email 每行一条，写盘后再读回验证数量与字段完全一致。",
+        "定义 ContactError : std::runtime_error，在姓名重复与号码非法时抛出，并在 main 中分别捕获。"
+      ],
+      "exercises": [
+        {
+          "id": "w8d6e1",
+          "title": "存盘与读回的往返一致性",
+          "prompt": "给 ContactBook 实现 `bool save(const std::string& path) const` 与 `bool load(const std::string& path)`：保存格式为每行 `name,phone,email`；load 先清空现有数据，逐行用逗号切分字段；文件打不开时返回 false 而不抛异常。main 中写入 amy、bob 两人，保存到 `contacts_test.csv`，用一个全新的 ContactBook 读回并逐条打印，再对不存在的文件 `no_such_file.csv` 调用 load 验证返回 false。验收：读回人数为 2、字段与写入完全一致、缺失文件返回 0。",
+          "hint": "写盘时逐行 out << name << ',' << phone << ',' << email << std::endl;；读盘时对每行构造 std::istringstream，再用带分隔符的 std::getline 依次取三个字段，这样字段里即使有空格也不会出错。",
+          "answer": "```cpp\n#include <fstream>\n#include <iostream>\n#include <map>\n#include <sstream>\n#include <string>\n#include <vector>\n\nstruct Contact {\n    std::string name;\n    std::string phone;\n    std::string email;\n};\n\nclass ContactBook {\npublic:\n    bool add(const Contact& c) { return contacts_.emplace(c.name, c).second; }\n\n    bool save(const std::string& path) const {\n        std::ofstream out(path);\n        if (!out) return false;\n        for (const auto& kv : contacts_)\n            out << kv.second.name << ',' << kv.second.phone << ',' << kv.second.email << std::endl;\n        return static_cast<bool>(out);\n    }\n\n    bool load(const std::string& path) {\n        std::ifstream in(path);\n        if (!in) return false;\n        contacts_.clear();\n        std::string line;\n        while (std::getline(in, line)) {\n            if (line.empty()) continue;\n            std::istringstream ls(line);\n            Contact c;\n            std::getline(ls, c.name, ',');\n            std::getline(ls, c.phone, ',');\n            std::getline(ls, c.email, ',');\n            contacts_[c.name] = c;\n        }\n        return true;\n    }\n\n    std::size_t size() const { return contacts_.size(); }\n\n    std::vector<Contact> list() const {\n        std::vector<Contact> out;\n        for (const auto& kv : contacts_) out.push_back(kv.second);\n        return out;\n    }\n\nprivate:\n    std::map<std::string, Contact> contacts_;\n};\n\nint main() {\n    const std::string path = \"contacts_test.csv\";\n\n    ContactBook writer;\n    writer.add({\"amy\", \"13800000001\", \"amy@example.com\"});\n    writer.add({\"bob\", \"13800000002\", \"bob@example.com\"});\n    std::cout << \"save=\" << writer.save(path) << std::endl;\n\n    ContactBook reader;\n    std::cout << \"load=\" << reader.load(path) << \" size=\" << reader.size() << std::endl;\n    for (const Contact& c : reader.list())\n        std::cout << c.name << '|' << c.phone << '|' << c.email << std::endl;\n\n    ContactBook missing;\n    std::cout << \"load missing file=\" << missing.load(\"no_such_file.csv\") << std::endl;\n}\n```\nsave 在最后用 static_cast<bool>(out) 检查流状态，能发现磁盘写入过程中的失败（如磁盘满）。load 里的 std::istringstream 加带分隔符的 getline 是解析 CSV 行最稳的做法，比手工 find(',') 更不容易漏掉空字段。",
+          "difficulty": 2
+        },
+        {
+          "id": "w8d6e2",
+          "title": "完整闭环：异常、排序、持久化与 unique_ptr",
+          "prompt": "把本周内容串成一个可运行的小项目：用 `std::unique_ptr<ContactBook>` 持有通讯录；实现 add(name,phone)（姓名为空或号码不是 11 位数字抛 `ContactError`，姓名重复也抛）、remove（不存在抛）、find（不存在抛）、sorted_by_phone()、save/load。main 中依次执行：尝试加载已有文件（允许失败）、新增 3 个联系人、故意重复新增 amy 并捕获异常、故意删除不存在的人并捕获异常、按电话排序打印、保存到文件并打印最终人数。验收：两个异常都被捕获并打印原因，排序输出按号码升序，保存成功且人数为 3。",
+          "hint": "ContactError 继承 std::runtime_error 并转发构造函数；所有异常抛出点都带上出错的值，catch 时用 what() 打印；unique_ptr 用 new 构造，通过 -> 调用成员。",
+          "answer": "```cpp\n#include <algorithm>\n#include <fstream>\n#include <iostream>\n#include <map>\n#include <memory>\n#include <stdexcept>\n#include <string>\n#include <vector>\n\nstruct Contact {\n    std::string name;\n    std::string phone;\n};\n\nclass ContactError : public std::runtime_error {\npublic:\n    explicit ContactError(const std::string& msg) : std::runtime_error(msg) {}\n};\n\nclass ContactBook {\npublic:\n    void add(const std::string& name, const std::string& phone) {\n        if (name.empty()) throw ContactError(\"empty name\");\n        if (phone.size() != 11) throw ContactError(\"invalid phone: \" + phone);\n        if (!contacts_.emplace(name, Contact{name, phone}).second)\n            throw ContactError(\"duplicate name: \" + name);\n    }\n\n    void remove(const std::string& name) {\n        if (contacts_.erase(name) == 0) throw ContactError(\"not found: \" + name);\n    }\n\n    const Contact& find(const std::string& name) const {\n        auto it = contacts_.find(name);\n        if (it == contacts_.end()) throw ContactError(\"not found: \" + name);\n        return it->second;\n    }\n\n    std::vector<Contact> sorted_by_phone() const {\n        std::vector<Contact> out;\n        out.reserve(contacts_.size());\n        for (const auto& kv : contacts_) out.push_back(kv.second);\n        std::sort(out.begin(), out.end(), [](const Contact& a, const Contact& b) {\n            if (a.phone != b.phone) return a.phone < b.phone;\n            return a.name < b.name;\n        });\n        return out;\n    }\n\n    bool save(const std::string& path) const {\n        std::ofstream out(path);\n        if (!out) return false;\n        for (const auto& kv : contacts_)\n            out << kv.second.name << ',' << kv.second.phone << std::endl;\n        return static_cast<bool>(out);\n    }\n\n    bool load(const std::string& path) {\n        std::ifstream in(path);\n        if (!in) return false;\n        contacts_.clear();\n        std::string line;\n        while (std::getline(in, line)) {\n            std::size_t pos = line.find(',');\n            if (line.empty() || pos == std::string::npos) continue;\n            std::string name = line.substr(0, pos);\n            contacts_[name] = Contact{name, line.substr(pos + 1)};\n        }\n        return true;\n    }\n\n    std::size_t size() const { return contacts_.size(); }\n\nprivate:\n    std::map<std::string, Contact> contacts_;\n};\n\nint main() {\n    const std::string path = \"address_book.csv\";\n    std::unique_ptr<ContactBook> book(new ContactBook());\n    std::cout << \"load existing file: \" << book->load(path) << std::endl;\n\n    try {\n        book->add(\"amy\", \"13800000003\");\n        book->add(\"bob\", \"13800000001\");\n        book->add(\"cy\", \"13800000002\");\n        std::cout << \"added 3 contacts, size=\" << book->size() << std::endl;\n    } catch (const ContactError& e) {\n        std::cout << \"add failed: \" << e.what() << std::endl;\n    }\n\n    try {\n        book->add(\"amy\", \"13800000009\");\n    } catch (const ContactError& e) {\n        std::cout << \"expected error: \" << e.what() << std::endl;\n    }\n\n    try {\n        book->remove(\"nobody\");\n    } catch (const ContactError& e) {\n        std::cout << \"expected error: \" << e.what() << std::endl;\n    }\n\n    std::cout << \"sorted by phone:\" << std::endl;\n    for (const Contact& c : book->sorted_by_phone())\n        std::cout << c.phone << ' ' << c.name << std::endl;\n\n    std::cout << \"saved=\" << book->save(path) << \" final size=\" << book->size() << std::endl;\n}\n```\n自定义异常让「参数非法」与「状态不存在」可以用同一套 catch 处理，同时保留具体类型用于精确捕获；错误信息里带上出错的值，排查时不必再猜。unique_ptr 表达「这个通讯录对象由我独占」，离开作用域自动释放，这也是第 4 周 RAII 思想在项目中的落地。",
+          "difficulty": 3
+        }
+      ],
+      "checklist": [
+        "save/load 往返后人数与字段完全一致，缺失文件返回 false",
+        "重复新增与删除不存在的人都能抛出并捕获 ContactError",
+        "按电话排序输出正确，保存后最终人数为 3",
+        "项目用 unique_ptr 持有对象且无内存泄漏（能说清释放时机）"
+      ]
+    },
+    {
+      "id": "w8d7",
+      "weekday": "周日",
+      "title": "收尾与后续路线规划",
+      "minutes": 30,
+      "kind": "rest",
+      "learn": [
+        "回顾八周主线：类与 RAII → 容器与迭代器 → 算法与 lambda → 模板与泛型 → 移动语义、值语义工具与并发入门，这条线最终都收敛到「用类型和所有权表达意图」。"
+      ],
+      "reading": "《C++ Primer（第 5 版）》第 13 章 13.6 与第 12 章 12.1（复习移动语义与智能指针）；cppreference: C++17 标准库总览页",
+      "practice": [
+        "可选任务：给自己的通讯录项目补一份 README（功能、编译命令、文件格式）并跑通全流程；再写出后续 4 周的学习路线：C++20/23 新特性（ranges、concepts、coroutine）、并发深入（condition_variable、线程池）、构建与测试（CMake、单元测试框架）、性能与调试（perf、sanitizer）、阅读开源项目源码。"
+      ],
+      "exercises": [
+        {
+          "id": "w8d7e1",
+          "title": "收尾练习：用 optional 与 string_view 解析命令行参数",
+          "prompt": "实现 `std::optional<int> parse_count(std::string_view arg)`：形如 `--count=5` 的参数返回 5；前缀不对、缺少数值、数值含非数字字符时返回 std::nullopt。main 中依次对 \"--count=5\"、\"--count=abc\"、\"count=5\"、\"--count=\" 调用并打印结果，非法输入打印 invalid。验收：输出 5、invalid、invalid、invalid 四行。",
+          "hint": "先比较前缀（用 string_view::substr 与常量比较），再用 std::stoi 解析剩余部分并捕获异常；注意 stoi 需要 std::string，string_view 要先显式构造。",
+          "answer": "```cpp\n#include <exception>\n#include <iostream>\n#include <optional>\n#include <string>\n#include <string_view>\n\nstd::optional<int> parse_count(std::string_view arg) {\n    const std::string_view prefix = \"--count=\";\n    if (arg.size() <= prefix.size()) return std::nullopt;\n    if (arg.substr(0, prefix.size()) != prefix) return std::nullopt;\n\n    const std::string digits(arg.substr(prefix.size()));\n    try {\n        return std::stoi(digits);\n    } catch (const std::exception&) {\n        return std::nullopt;\n    }\n}\n\nint main() {\n    for (const char* raw : {\"--count=5\", \"--count=abc\", \"count=5\", \"--count=\"}) {\n        if (auto v = parse_count(raw)) std::cout << raw << \" -> \" << *v << std::endl;\n        else std::cout << raw << \" -> invalid\" << std::endl;\n    }\n}\n```\nstring_view 让前缀比较零拷贝，但 stoi 需要真正的 std::string，所以最后一步必须显式构造——这正好说明视图与所有权是两件事。optional 把「解析失败」写进类型，调用方必须处理，这正是本周值语义工具的典型用法。",
+          "difficulty": 1
+        }
+      ],
+      "checklist": [
+        "回顾八周，能画出从类与 RAII 到移动语义与并发的知识脉络",
+        "四行解析结果与预期一致",
+        "项目 README 写完并能从零编译运行",
+        "写出后续 4 周的学习路线与每周可交付物"
+      ]
+    }
+  ]
+}
