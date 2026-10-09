@@ -1,0 +1,6 @@
+# dsh-study-planner bundle patch
+# 把插件的主机端（Host）行插入当前 profile 的配置树。
+# 客户端（Web UI）那一半由 package.json 的 dsh.client 声明，DSH 会把它注入页面。
+- insert:
+    - id: dsh-study-planner
+      name: 'dsh-study-planner'
